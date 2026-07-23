@@ -5,7 +5,11 @@
 //   · tu luz, con línea de visión → señal fuerte
 //   · el resplandor de tu luz doblando esquinas → señal débil
 //   · presencia a muy corta distancia → te siente
+//   · un chapoteo en un charco → rastrea tu posición unos segundos
 // FSM: IDLE (patrulla) → INVESTIGATE (señal) → HUNT (confirmado) → SEARCH (perdió el rastro).
+//
+// El dilema de la luz es asimétrico: con la linterna encendida caza más
+// rápido de lo que corres; con la luz apagada es lento y te olvida pronto.
 
 import * as THREE from 'three';
 import { bfsPath, losClear } from '../maze/nav.js';
@@ -42,7 +46,9 @@ export class Monster {
     }
 
     this.state = STATES.IDLE;
+    this.onState = null; // callback (from, to) → estridencias de audio
     this.awareness = 0;
+    this.noiseT = 0; // segundos restantes rastreando un ruido (charcos)
     this.lastSignal = new THREE.Vector2();
     this.lastSeen = new THREE.Vector2();
     this.path = null;
@@ -54,51 +60,77 @@ export class Monster {
     this.time = rand() * 10;
     this.isMoving = false;
     this.hasCaught = false;
+    this.lungeAmount = 0;
     this.distanceToPlayer = Infinity;
   }
 
   buildMesh() {
-    // Silueta abstracta: alta, delgada, mate, casi invisible en la oscuridad.
-    // Lo aterrador no es verlo; es sentir que está cerca (GDD).
-    const mat = new THREE.MeshStandardMaterial({ color: 0x0b0b0e, roughness: 0.96 });
+    // Humanoide pálido y esquelético, sin rostro: la piel enfermiza refleja
+    // la luz de los focos y de la linterna — verlo a lo lejos, quieto al
+    // fondo de un pasillo, es el corazón de la imagen del juego.
+    const tone = 0.16 + this.rand() * 0.04;
+    const skin = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(tone, tone * 0.92, tone * 0.84),
+      roughness: 0.85,
+    });
     this.body = new THREE.Group();
 
-    const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.3, 1.9, 7), mat);
-    torso.position.y = 0.95;
+    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.16, 0.62, 4, 8), skin);
+    torso.position.y = 1.32;
+    torso.scale.set(1, 1, 0.72); // pecho hundido
     torso.castShadow = true;
 
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.15, 8, 8), mat);
-    head.position.y = 2.0;
-    head.castShadow = true;
+    const pelvis = new THREE.Mesh(new THREE.SphereGeometry(0.15, 8, 8), skin);
+    pelvis.position.y = 0.98;
+    pelvis.scale.set(1, 0.7, 0.8);
+    pelvis.castShadow = true;
 
-    // Ojos: dos puntos pálidos, apenas visibles. Frente del cuerpo = -Z.
-    const eyeMat = new THREE.MeshBasicMaterial({
-      color: 0x9caf92, transparent: true, opacity: 0.35,
-    });
-    const eyeGeo = new THREE.SphereGeometry(0.025, 6, 6);
-    const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
-    eyeL.position.set(-0.055, 2.02, -0.13);
-    const eyeR = new THREE.Mesh(eyeGeo, eyeMat);
-    eyeR.position.set(0.055, 2.02, -0.13);
+    const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.18, 6), skin);
+    neck.position.y = 1.78;
 
-    const armGeo = new THREE.CylinderGeometry(0.035, 0.05, 1.1, 5);
-    const armL = new THREE.Mesh(armGeo, mat);
-    armL.position.set(-0.34, 1.25, 0);
-    armL.rotation.z = 0.16;
-    armL.castShadow = true;
-    const armR = new THREE.Mesh(armGeo, mat);
-    armR.position.set(0.34, 1.25, 0);
-    armR.rotation.z = -0.16;
-    armR.castShadow = true;
+    this.head = new THREE.Mesh(new THREE.SphereGeometry(0.11, 10, 10), skin);
+    this.head.position.y = 1.95;
+    this.head.scale.set(1, 1.35, 1.05); // cráneo alargado, sin rasgos
+    this.head.castShadow = true;
 
-    this.body.add(torso, head, eyeL, eyeR, armL, armR);
+    // Brazos larguísimos, colgando hasta las rodillas; pivote en el hombro
+    const armGeo = new THREE.CapsuleGeometry(0.042, 0.82, 4, 6);
+    armGeo.translate(0, -0.45, 0);
+    this.armL = new THREE.Mesh(armGeo, skin);
+    this.armL.position.set(-0.22, 1.62, 0);
+    this.armL.rotation.z = 0.1;
+    this.armL.castShadow = true;
+    this.armR = new THREE.Mesh(armGeo.clone(), skin);
+    this.armR.position.set(0.22, 1.62, 0);
+    this.armR.rotation.z = -0.1;
+    this.armR.castShadow = true;
+
+    // Piernas con pivote en la cadera
+    const legGeo = new THREE.CapsuleGeometry(0.055, 0.85, 4, 6);
+    legGeo.translate(0, -0.5, 0);
+    this.legL = new THREE.Mesh(legGeo, skin);
+    this.legL.position.set(-0.1, 0.98, 0);
+    this.legL.castShadow = true;
+    this.legR = new THREE.Mesh(legGeo.clone(), skin);
+    this.legR.position.set(0.1, 0.98, 0);
+    this.legR.castShadow = true;
+
+    this.body.add(torso, pelvis, neck, this.head, this.armL, this.armR, this.legL, this.legR);
+    this.body.rotation.x = -0.06; // encorvado hacia el frente
     this.group.add(this.body);
   }
 
   setState(s) {
     if (this.state === s) return;
     if (this.debug) console.log(`[monstruo] ${this.state} → ${s}`);
+    const from = this.state;
     this.state = s;
+    if (this.onState) this.onState(from, s);
+  }
+
+  // Un chapoteo (u otro ruido fuerte): rastrea tu posición unos segundos.
+  hearNoise() {
+    this.noiseT = this.cfg.noiseTrackSeconds;
   }
 
   // ---------- movimiento sobre el grafo del laberinto ----------
@@ -202,6 +234,34 @@ export class Monster {
     return false;
   }
 
+  // Durante la secuencia de muerte: cierra la distancia y encara al jugador.
+  approachForKill(playerPos, dt) {
+    const m = this.group.position;
+    const dx = playerPos.x - m.x;
+    const dz = playerPos.z - m.z;
+    const d = Math.hypot(dx, dz);
+    if (d > 0.8) {
+      const step = Math.min(d - 0.8, 6 * dt);
+      m.x += (dx / d) * step;
+      m.z += (dz / d) * step;
+    }
+    const targetYaw = Math.atan2(-dx, -dz);
+    this.group.rotation.y += shortestAngle(targetYaw - this.group.rotation.y) * Math.min(1, 14 * dt);
+
+    // Zarpazo: brazos al frente, cabeza volcada hacia la cámara
+    this.lungeAmount = Math.min(1, this.lungeAmount + 5 * dt);
+    const a = this.lungeAmount;
+    this.armL.rotation.x = 1.5 * a;
+    this.armR.rotation.x = 1.5 * a;
+    this.armL.rotation.z = 0.1 - 0.25 * a;
+    this.armR.rotation.z = -0.1 + 0.25 * a;
+    this.legL.rotation.x = 0;
+    this.legR.rotation.x = 0;
+    this.head.rotation.x = 0.5 * a;
+    this.body.rotation.x = -0.06 - 0.3 * a;
+    this.body.position.y = 0;
+  }
+
   // ---------- ciclo principal ----------
 
   update(dt, playerPos, flashlight) {
@@ -218,7 +278,7 @@ export class Monster {
     const los = losClear(this.maze.grid, mfx, mfy, pfx, pfy);
     const light = flashlight.lightLevel > 0.05;
 
-    // --- percepción (la luz es su único sentido a distancia) ---
+    // --- percepción (luz a distancia + ruidos recientes) ---
     let gain = 0;
     if (light) {
       if (los && d < c.lightVisionRange) {
@@ -236,12 +296,21 @@ export class Monster {
         playerPos.z + (this.rand() - 0.5) * noise
       );
     } else {
-      this.awareness = Math.max(0, this.awareness - c.awarenessDecay * dt);
+      // Con la luz apagada te olvida mucho más rápido: apagar ES esconderse
+      const decay = light ? c.awarenessDecay : c.awarenessDecayDark;
+      this.awareness = Math.max(0, this.awareness - decay * dt);
+    }
+
+    // Ruido oído (chapoteo): rastrea tu posición real durante unos segundos
+    if (this.noiseT > 0) {
+      this.noiseT -= dt;
+      this.awareness = Math.max(this.awareness, c.awarenessInvestigate + 0.1);
+      this.lastSignal.set(playerPos.x, playerPos.z);
     }
 
     const senses = d < c.closeSense && los;
     const direct = light && los && d < c.instantHuntDist;
-    const signal = light && (los || d < c.lightLeakRange);
+    const signal = (light && (los || d < c.lightLeakRange)) || this.noiseT > 0;
 
     switch (this.state) {
       case STATES.IDLE: {
@@ -254,7 +323,9 @@ export class Monster {
 
       case STATES.INVESTIGATE: {
         if (this.escalate(direct, senses, playerPos)) break;
-        if (gain > 0 && this.repathT <= 0) this.goTo(this.lastSignal.x, this.lastSignal.y, 0.6);
+        if ((gain > 0 || this.noiseT > 0) && this.repathT <= 0) {
+          this.goTo(this.lastSignal.x, this.lastSignal.y, 0.6);
+        }
         this.repathT -= dt;
         if (this.arrived()) {
           this.lookT -= dt;
@@ -267,12 +338,15 @@ export class Monster {
       }
 
       case STATES.HUNT: {
-        if (signal || los) {
+        // A oscuras solo te retiene si estás casi encima; sin señal, el
+        // contador de cacería se agota mucho más rápido con la luz apagada.
+        if (signal || (los && d < c.closeSense * 1.5)) {
           this.chaseT = c.loseSightSeconds;
           this.lastSeen.set(playerPos.x, playerPos.z);
         } else {
-          this.chaseT -= dt;
+          this.chaseT -= dt * (light ? 1 : c.loseSightSeconds / c.loseSightSecondsDark);
         }
+        const huntSpeed = light ? c.huntSpeedLit : c.huntSpeedDark;
         this.repathT -= dt;
         if (this.repathT <= 0) this.goTo(playerPos.x, playerPos.z, c.repathInterval);
         // A quemarropa y con línea de visión va directo al jugador,
@@ -280,14 +354,14 @@ export class Monster {
         if (los && d < this.maze.tileSize * 1.2 && d > 1e-4) {
           const ux = dx / d;
           const uz = dz / d;
-          m.x += ux * c.huntSpeed * dt;
-          m.z += uz * c.huntSpeed * dt;
+          m.x += ux * huntSpeed * dt;
+          m.z += uz * huntSpeed * dt;
           this.isMoving = true;
           const targetYaw = Math.atan2(-ux, -uz);
           this.group.rotation.y +=
             shortestAngle(targetYaw - this.group.rotation.y) * Math.min(1, 10 * dt);
         } else {
-          this.follow(c.huntSpeed, dt);
+          this.follow(huntSpeed, dt);
         }
         if (this.chaseT <= 0) this.enterSearch(this.lastSeen.x, this.lastSeen.y);
         break;
@@ -308,12 +382,21 @@ export class Monster {
 
     if (d < c.catchDistance) this.hasCaught = true;
 
-    // Animación mínima: vaivén del cuerpo según el estado
+    // Animación: ciclo de marcha rígido, más frenético en cacería
     this.time += dt;
-    const animSpeed = this.state === STATES.HUNT ? 14 : 7;
+    const animSpeed = this.state === STATES.HUNT ? 11 : 5.5;
+    const swing = Math.sin(this.time * animSpeed);
+    const amp = this.isMoving ? (this.state === STATES.HUNT ? 0.75 : 0.4) : 0;
+    this.armL.rotation.x += (swing * amp - this.armL.rotation.x) * Math.min(1, 10 * dt);
+    this.armR.rotation.x += (-swing * amp - this.armR.rotation.x) * Math.min(1, 10 * dt);
+    this.legL.rotation.x += (-swing * amp - this.legL.rotation.x) * Math.min(1, 10 * dt);
+    this.legR.rotation.x += (swing * amp - this.legR.rotation.x) * Math.min(1, 10 * dt);
     this.body.position.y = this.isMoving
-      ? Math.sin(this.time * animSpeed) * 0.05
+      ? Math.abs(Math.sin(this.time * animSpeed)) * 0.04
       : Math.sin(this.time * 1.3) * 0.02;
-    this.body.rotation.z = this.isMoving ? Math.sin(this.time * animSpeed * 0.5) * 0.05 : 0;
+    // La cabeza barre los alrededores cuando busca; se clava al frente cazando
+    this.head.rotation.y = this.state === STATES.HUNT
+      ? 0
+      : Math.sin(this.time * 0.9) * 0.55;
   }
 }

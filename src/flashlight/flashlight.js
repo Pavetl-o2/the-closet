@@ -21,6 +21,11 @@ export class Flashlight {
     scene.add(this.spot);
     scene.add(this.spot.target);
 
+    // Rebote suave alrededor del jugador: sin esto, el cono se siente
+    // como mirar por un túnel (todo fuera del haz queda negro absoluto).
+    this.spill = new THREE.PointLight(cfg.color, 0, cfg.spill.distance, 2);
+    scene.add(this.spill);
+
     this.on = false;
     this.battery = 1;
     this.lightLevel = 0; // 0..1 real emitido (la IA y el HUD leen esto)
@@ -75,6 +80,7 @@ export class Flashlight {
     this.spot.distance = c.distance * t.range;
     this.spot.angle = c.angle * t.angle;
     this.lightLevel = eff / c.intensity;
+    this.spill.intensity = this.lightLevel * c.spill.intensity;
 
     // Posición: en la "mano" (abajo-derecha de la cámara),
     // apuntando con retraso respecto a la mirada → se siente sostenida.
@@ -86,6 +92,7 @@ export class Flashlight {
 
     this.spot.position.copy(this._pos).addScaledVector(this._right, 0.16);
     this.spot.position.y -= 0.12;
+    this.spill.position.copy(this._pos).addScaledVector(this.smoothDir, 1.2);
     this.spot.target.position.copy(this._pos).addScaledVector(this.smoothDir, 12);
     this.spot.target.position.y += Math.sin(this.time * 2.3) * 0.05;
   }

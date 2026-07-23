@@ -11,7 +11,7 @@ import { buildMazeScene } from './maze/builder.js';
 import { setupAtmosphere, updateLamps } from './world/atmosphere.js';
 import { Player } from './player/player.js';
 import { Flashlight } from './flashlight/flashlight.js';
-import { Monster } from './monster/monster.js';
+import { Monster, STATES } from './monster/monster.js';
 import { ProximityAudio } from './audio/proximity.js';
 import { HUD } from './ui/hud.js';
 
@@ -43,30 +43,49 @@ scene.add(player.rig);
 
 const flashlight = new Flashlight(scene, CONFIG.FLASHLIGHT);
 
-// El monstruo aparece lejos de la entrada (nunca de forma injusta)
-const distFromEntry = bfsDistances(maze.grid, maze.entry).dist;
-const spawnCandidates = [];
-for (let y = 0; y < M.H; y++) {
-  for (let x = 0; x < M.W; x++) {
-    const d = distFromEntry[y * M.W + x];
-    if (d >= CONFIG.MONSTER.minSpawnDistTiles && !(x === maze.exit[0] && y === maze.exit[1])) {
-      spawnCandidates.push([x, y]);
-    }
-  }
-}
-const mSpawn = spawnCandidates.length
-  ? spawnCandidates[(rand() * spawnCandidates.length) | 0]
-  : maze.exit;
-const monster = new Monster(scene, M, CONFIG.MONSTER, rand, mSpawn, CONFIG.DEBUG);
-
 const audio = new ProximityAudio(CONFIG.AUDIO);
 const hud = new HUD();
 hud.setText('seed-label', `semilla ${seed}`);
 
+// Los monstruos aparecen lejos de la entrada y lejos entre sí
+// (nunca de forma injusta).
+const distFromEntry = bfsDistances(maze.grid, maze.entry).dist;
+const monsters = [];
+const spawnTiles = [];
+for (let i = 0; i < CONFIG.MONSTER.count; i++) {
+  let candidates = [];
+  for (let y = 0; y < M.H; y++) {
+    for (let x = 0; x < M.W; x++) {
+      const d = distFromEntry[y * M.W + x];
+      if (d < CONFIG.MONSTER.minSpawnDistTiles) continue;
+      if (x === maze.exit[0] && y === maze.exit[1]) continue;
+      if (spawnTiles.some(([sx, sy]) => Math.hypot(sx - x, sy - y) < CONFIG.MONSTER.minSeparationTiles)) {
+        continue;
+      }
+      candidates.push([x, y]);
+    }
+  }
+  if (!candidates.length) candidates = [maze.exit];
+  const tile = candidates[(rand() * candidates.length) | 0];
+  spawnTiles.push(tile);
+  const mon = new Monster(scene, M, CONFIG.MONSTER, rand, tile, CONFIG.DEBUG);
+  mon.onState = (from, to) => {
+    if (to === STATES.HUNT) audio.huntSting();
+  };
+  monsters.push(mon);
+}
+
+// Luz de la secuencia de muerte: un fogonazo frío que revela al monstruo
+const revealLight = new THREE.PointLight(0xcfd6de, 0, 5, 2);
+scene.add(revealLight);
+
 // ---------- estados de partida ----------
-let state = 'start'; // start | playing | paused | dead | win
+let state = 'start'; // start | playing | caught | paused | dead | win
 let elapsed = 0;
 let lockGraceT = 0; // ignora el clic que capturó el mouse
+let deathT = 0;
+let killer = null;
+let splashCd = 0;
 const exitT = built.exitTrigger;
 
 function reloadWithSeed(s) {
@@ -81,10 +100,15 @@ function fmtTime(s) {
   return `${m}:${String(r).padStart(2, '0')}`;
 }
 
+function shortestAngle(a) {
+  return Math.atan2(Math.sin(a), Math.cos(a));
+}
+
 function endRun(kind) {
   state = kind;
   player.enabled = false;
   audio.silence();
+  revealLight.intensity = 0;
   if (document.pointerLockElement) document.exitPointerLock();
   hud.show(kind); // negro inmediato; el texto llega después (GDD: negro y silencio)
   hud.setText(kind === 'dead' ? 'dead-info' : 'win-info', `semilla ${seed} · ${fmtTime(elapsed)}`);
@@ -92,6 +116,16 @@ function endRun(kind) {
     () => hud.reveal(kind === 'dead' ? 'dead-text' : 'win-text'),
     kind === 'dead' ? 1600 : 900
   );
+}
+
+// Captura: antes del negro hay un instante en el que SÍ lo ves —
+// se gira tu mirada, él cierra la distancia y un fogonazo lo revela.
+function beginDeath(mon) {
+  state = 'caught';
+  killer = mon;
+  deathT = 0;
+  player.enabled = false;
+  audio.deathSting();
 }
 
 // ---------- input / pointer lock ----------
@@ -161,6 +195,7 @@ addEventListener('resize', () => {
 
 // ---------- bucle principal ----------
 const clock = new THREE.Clock();
+const _camPos = new THREE.Vector3();
 
 function loop() {
   requestAnimationFrame(loop);
@@ -172,21 +207,68 @@ function loop() {
 
     player.update(dt);
     flashlight.update(dt, camera);
-    monster.update(dt, player.position, flashlight);
+    for (const mon of monsters) mon.update(dt, player.position, flashlight);
     updateLamps(built.lamps, elapsed);
-    audio.update(dt, monster, player);
+    audio.update(dt, monsters, player);
     hud.setBattery(flashlight.battery, flashlight.lightLevel);
 
-    if (monster.hasCaught) {
-      endRun('dead');
+    // Pisar un charco delata tu posición: los monstruos que lo oyen
+    // rastrean tu ubicación unos segundos (ver Monster.hearNoise)
+    splashCd -= dt;
+    if (player.moving && splashCd <= 0) {
+      for (const p of built.puddles) {
+        const dx = player.position.x - p.x;
+        const dz = player.position.z - p.z;
+        if (dx * dx + dz * dz < p.r * p.r) {
+          splashCd = CONFIG.PROPS.puddles.splashCooldown;
+          audio.splash(player.isRunning);
+          for (const mon of monsters) {
+            if (mon.distanceToPlayer < CONFIG.MONSTER.hearingRange) mon.hearNoise();
+          }
+          break;
+        }
+      }
+    }
+
+    const caughtBy = monsters.find((m) => m.hasCaught);
+    if (caughtBy) {
+      beginDeath(caughtBy);
     } else {
       const dx = player.position.x - exitT.x;
       const dz = player.position.z - exitT.z;
       if (dx * dx + dz * dz < 1.4 * 1.4) endRun('win');
     }
+  } else if (state === 'caught') {
+    deathT += dt;
+
+    // Girar la mirada hacia él (y levantarla: es más alto que tú)
+    const dx = killer.group.position.x - player.position.x;
+    const dz = killer.group.position.z - player.position.z;
+    const targetYaw = Math.atan2(-dx, -dz);
+    player.rig.rotation.y += shortestAngle(targetYaw - player.rig.rotation.y) * Math.min(1, 14 * dt);
+    player.pitchObj.rotation.x += (0.16 - player.pitchObj.rotation.x) * Math.min(1, 10 * dt);
+
+    killer.approachForKill(player.position, dt);
+    flashlight.update(dt, camera);
+
+    // Fogonazo tembloroso que lo revela aunque tu linterna esté apagada
+    camera.getWorldPosition(_camPos);
+    revealLight.position.copy(_camPos);
+    revealLight.intensity = Math.min(1, deathT / 0.12) * 30 * (Math.random() < 0.14 ? 0.35 : 1);
+
+    // Sacudida de cámara mientras lo tienes encima
+    camera.position.x = (Math.random() - 0.5) * 0.02;
+    camera.position.y = (Math.random() - 0.5) * 0.02;
+
+    if (deathT >= 0.9) endRun('dead'); // corte a negro y silencio (GDD)
   }
 
   renderer.render(scene, camera);
 }
 
 loop();
+
+// Acceso de depuración (?debug en la URL): inspección desde consola
+if (new URLSearchParams(location.search).has('debug')) {
+  window.__game = { scene, camera, player, flashlight, monsters, built, maze, CONFIG };
+}

@@ -1,13 +1,19 @@
 // Construye la geometría del laberinto a partir de la grilla.
 // Muros y props con InstancedMesh para mantener pocos draw calls.
+// La ambientación es constante (GDD): tuberías, cajas, tarimas, barriles,
+// ropa tirada, vidrios rotos, manchas y focos colgantes que parpadean.
 
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { WALL, FLOOR } from './generator.js';
 import {
   makeWallTexture,
   makeFloorTexture,
   makeCeilingTexture,
   makeRustTexture,
+  makeWoodTexture,
+  makePuddleTexture,
+  makeStainTexture,
 } from '../world/textures.js';
 
 export function buildMazeScene(scene, maze, CFG, rand) {
@@ -22,10 +28,25 @@ export function buildMazeScene(scene, maze, CFG, rand) {
   const isWall = (x, y) =>
     x < 0 || y < 0 || x >= W || y >= H ? true : grid[y][x] === WALL;
 
+  const isSpecial = (x, y) =>
+    (x === maze.entry[0] && y === maze.entry[1]) ||
+    (x === maze.exit[0] && y === maze.exit[1]);
+
   const floors = [];
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) if (grid[y][x] === FLOOR) floors.push([x, y]);
   }
+
+  const pickFloor = () => floors[(rand() * floors.length) | 0];
+
+  // Direcciones con muro adyacente (para arrimar props a las paredes)
+  const wallDirs = (x, y) => {
+    const out = [];
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      if (isWall(x + dx, y + dy)) out.push([dx, dy]);
+    }
+    return out;
+  };
 
   // --- materiales ---
   const wallTex = makeWallTexture(rand);
@@ -45,6 +66,11 @@ export function buildMazeScene(scene, maze, CFG, rand) {
     metalness: 0.35,
   });
 
+  const woodMat = new THREE.MeshStandardMaterial({
+    map: makeWoodTexture(rand),
+    roughness: 0.92,
+  });
+
   const metalMat = new THREE.MeshStandardMaterial({
     color: 0x23282a,
     roughness: 0.55,
@@ -52,6 +78,7 @@ export function buildMazeScene(scene, maze, CFG, rand) {
   });
 
   const dummy = new THREE.Object3D();
+  const col = new THREE.Color();
 
   // --- muros (solo los que tocan piso; instanciados) ---
   const visible = [];
@@ -70,7 +97,6 @@ export function buildMazeScene(scene, maze, CFG, rand) {
 
   const wallGeo = new THREE.BoxGeometry(t, wallH, t);
   const walls = new THREE.InstancedMesh(wallGeo, wallMat, visible.length);
-  const col = new THREE.Color();
   visible.forEach(([x, y], i) => {
     const [wx, wz] = tileToWorld(x, y);
     dummy.position.set(wx, wallH / 2, wz);
@@ -98,29 +124,65 @@ export function buildMazeScene(scene, maze, CFG, rand) {
   ceiling.receiveShadow = true;
   scene.add(ceiling);
 
-  // --- charcos por goteras (planos especulares) ---
   const P = CFG.PROPS;
-  const puddleGeo = new THREE.CircleGeometry(0.55, 18);
+
+  // --- manchas en el piso (sangre seca y mugre; debajo de todo lo demás) ---
+  const stainGeo = new THREE.PlaneGeometry(1.1, 1.1);
+  const addStains = (count, blood) => {
+    if (!count) return;
+    const mat = new THREE.MeshStandardMaterial({
+      map: makeStainTexture(rand, blood),
+      transparent: true,
+      depthWrite: false,
+      roughness: 0.85,
+    });
+    const mesh = new THREE.InstancedMesh(stainGeo, mat, count);
+    for (let i = 0; i < count; i++) {
+      const [x, y] = pickFloor();
+      const [wx, wz] = tileToWorld(x, y);
+      dummy.position.set(wx + (rand() - 0.5) * 1.6, 0.006, wz + (rand() - 0.5) * 1.6);
+      dummy.rotation.set(-Math.PI / 2, 0, rand() * Math.PI * 2);
+      const s = 0.6 + rand() * 0.9;
+      dummy.scale.set(s, s, 1);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.renderOrder = 1;
+    scene.add(mesh);
+  };
+  addStains(P.clutter.bloodStains, true);
+  addStains(P.clutter.grimeStains, false);
+
+  // --- charcos por goteras (mancha irregular; pisarlos hace ruido) ---
+  const puddleList = [];
+  const puddleGeo = new THREE.PlaneGeometry(1.5, 1.5);
   const puddleMat = new THREE.MeshStandardMaterial({
-    color: 0x0c1116,
-    roughness: 0.06,
-    metalness: 0.9,
+    map: makePuddleTexture(rand),
+    transparent: true,
+    depthWrite: false,
+    roughness: 0.1,
+    metalness: 0.65,
   });
   const puddles = new THREE.InstancedMesh(puddleGeo, puddleMat, P.puddles.count);
   for (let i = 0; i < P.puddles.count; i++) {
-    const [x, y] = floors[(rand() * floors.length) | 0];
+    const [x, y] = pickFloor();
     const [wx, wz] = tileToWorld(x, y);
-    dummy.position.set(wx + (rand() - 0.5), 0.012, wz + (rand() - 0.5));
-    dummy.rotation.set(-Math.PI / 2, 0, rand() * Math.PI);
-    const s = 0.6 + rand() * 0.8;
-    dummy.scale.set(s, s * (0.7 + rand() * 0.5), 1);
+    const px = wx + (rand() - 0.5);
+    const pz = wz + (rand() - 0.5);
+    dummy.position.set(px, 0.012, pz);
+    dummy.rotation.set(-Math.PI / 2, 0, rand() * Math.PI * 2);
+    const s = 0.8 + rand() * 0.8;
+    dummy.scale.set(s, s, 1);
     dummy.updateMatrix();
     puddles.setMatrixAt(i, dummy.matrix);
+    puddleList.push({ x: px, z: pz, r: 0.62 * s });
   }
   puddles.instanceMatrix.needsUpdate = true;
+  puddles.renderOrder = 2;
   scene.add(puddles);
 
-  // --- tuberías oxidadas a lo largo de tramos rectos ---
+  // --- tramos rectos de pasillo (para tuberías y cables) ---
   const runs = [];
   for (let y = 1; y < H - 1; y++) {
     let x = 1;
@@ -128,10 +190,7 @@ export function buildMazeScene(scene, maze, CFG, rand) {
       if (grid[y][x] === FLOOR) {
         let x2 = x;
         while (x2 < W - 1 && grid[y][x2] === FLOOR) x2++;
-        const len = x2 - x;
-        if (len >= P.pipes.minRun && rand() < P.pipes.chance) {
-          runs.push({ axis: 'x', a: x, b: y, len });
-        }
+        runs.push({ axis: 'x', a: x, b: y, len: x2 - x });
         x = x2;
       } else x++;
     }
@@ -142,20 +201,20 @@ export function buildMazeScene(scene, maze, CFG, rand) {
       if (grid[y][x] === FLOOR) {
         let y2 = y;
         while (y2 < H - 1 && grid[y2][x] === FLOOR) y2++;
-        const len = y2 - y;
-        if (len >= P.pipes.minRun && rand() < P.pipes.chance) {
-          runs.push({ axis: 'z', a: y, b: x, len });
-        }
+        runs.push({ axis: 'z', a: y, b: x, len: y2 - y });
         y = y2;
       } else y++;
     }
   }
-  runs.length = Math.min(runs.length, P.pipes.max);
 
-  if (runs.length) {
+  // --- tuberías oxidadas: parte constante de la ambientación ---
+  const pipeRuns = runs.filter((r) => r.len >= P.pipes.minRun && rand() < P.pipes.chance);
+  pipeRuns.length = Math.min(pipeRuns.length, P.pipes.max);
+
+  if (pipeRuns.length) {
     const pipeGeo = new THREE.CylinderGeometry(P.pipes.radius, P.pipes.radius, 1, 10);
-    const pipes = new THREE.InstancedMesh(pipeGeo, rustMat, runs.length);
-    runs.forEach((r, i) => {
+    const pipes = new THREE.InstancedMesh(pipeGeo, rustMat, pipeRuns.length);
+    pipeRuns.forEach((r, i) => {
       const worldLen = r.len * t - 0.4;
       const side = (t / 2 - 0.32) * (rand() < 0.5 ? 1 : -1);
       if (r.axis === 'x') {
@@ -180,61 +239,261 @@ export function buildMazeScene(scene, maze, CFG, rand) {
     scene.add(pipes);
   }
 
-  // --- cajas antiguas en callejones sin salida (decorativas, sin colisión aún) ---
-  const isSpecial = (x, y) =>
-    (x === maze.entry[0] && y === maze.entry[1]) ||
-    (x === maze.exit[0] && y === maze.exit[1]);
+  // --- cables colgando del techo (algunos cuelgan sueltos, como arrancados) ---
+  const cableMat = new THREE.MeshStandardMaterial({ color: 0x0d0d0f, roughness: 0.9 });
+  const cableRuns = runs.filter((r) => r.len >= 2);
+  for (let i = 0; i < P.cables.count && cableRuns.length; i++) {
+    const r = cableRuns[(rand() * cableRuns.length) | 0];
+    const i0 = (rand() * (r.len - 1)) | 0;
+    const span = Math.min(1 + ((rand() * 2) | 0), r.len - 1 - i0) || 1;
+    const tw = (off) => (r.axis === 'x' ? tileToWorld(r.a + off, r.b) : tileToWorld(r.b, r.a + off));
+    const [x0, z0] = tw(i0);
+    const [x1, z1] = tw(i0 + span);
+    const off = (rand() - 0.5) * 1.4;
+    const p0 = new THREE.Vector3(x0 + (r.axis === 'z' ? off : 0), wallH - 0.04, z0 + (r.axis === 'x' ? off : 0));
+    const p1 = new THREE.Vector3(x1 + (r.axis === 'z' ? off : 0), wallH - 0.04, z1 + (r.axis === 'x' ? off : 0));
+    const dangling = rand() < 0.4; // cuelga suelto en vez de cruzar
+    if (dangling) {
+      p1.set(p0.x + (p1.x - p0.x) * 0.35, 1.2 + rand() * 0.8, p0.z + (p1.z - p0.z) * 0.35);
+    }
+    const mid = p0.clone().lerp(p1, 0.5);
+    mid.y -= dangling ? 0.15 : 0.3 + rand() * 0.35; // comba
+    const curve = new THREE.CatmullRomCurve3([p0, mid, p1]);
+    const cable = new THREE.Mesh(new THREE.TubeGeometry(curve, 12, 0.018, 5), cableMat);
+    scene.add(cable);
+  }
 
+  // --- cajas de madera: callejones sin salida + dispersas por los pasillos ---
   const crateSpots = [];
   for (const [x, y] of maze.deadEndList) {
     if (isSpecial(x, y)) continue;
     if (rand() >= P.crates.deadEndChance) continue;
     const n = rand() < 0.35 ? 2 : 1;
-    for (let i = 0; i < n; i++) crateSpots.push([x, y]);
+    for (let i = 0; i < n; i++) crateSpots.push([x, y, false]);
+  }
+  for (let i = 0; i < P.crates.scattered; i++) {
+    const [x, y] = pickFloor();
+    if (isSpecial(x, y)) continue;
+    crateSpots.push([x, y, true]); // arrimadas a la pared
   }
   if (crateSpots.length) {
     const crateGeo = new THREE.BoxGeometry(1, 1, 1);
-    const crateMat = new THREE.MeshStandardMaterial({ color: 0x453727, roughness: 0.95 });
-    const crates = new THREE.InstancedMesh(crateGeo, crateMat, crateSpots.length);
-    crateSpots.forEach(([x, y], i) => {
+    const crates = new THREE.InstancedMesh(crateGeo, woodMat, crateSpots.length);
+    crateSpots.forEach(([x, y, nearWall], i) => {
       const [wx, wz] = tileToWorld(x, y);
       const s = 0.45 + rand() * 0.4;
-      dummy.position.set(wx + (rand() - 0.5) * 1.2, s / 2, wz + (rand() - 0.5) * 1.2);
+      let ox = (rand() - 0.5) * 1.2;
+      let oz = (rand() - 0.5) * 1.2;
+      if (nearWall) {
+        const dirs = wallDirs(x, y);
+        if (dirs.length) {
+          const [dx, dy] = dirs[(rand() * dirs.length) | 0];
+          ox = dx * (t / 2 - s / 2 - 0.12) + (rand() - 0.5) * 0.4 * (1 - Math.abs(dx));
+          oz = dy * (t / 2 - s / 2 - 0.12) + (rand() - 0.5) * 0.4 * (1 - Math.abs(dy));
+        }
+      }
+      dummy.position.set(wx + ox, s / 2, wz + oz);
       dummy.rotation.set(0, rand() * Math.PI, 0);
       dummy.scale.set(s, s, s);
       dummy.updateMatrix();
       crates.setMatrixAt(i, dummy.matrix);
+      crates.setColorAt(i, col.setScalar(0.7 + rand() * 0.4));
     });
     crates.instanceMatrix.needsUpdate = true;
+    if (crates.instanceColor) crates.instanceColor.needsUpdate = true;
     crates.castShadow = true;
     crates.receiveShadow = true;
     scene.add(crates);
   }
 
-  // --- lámparas rotas en cruces (referencias escasas) ---
-  const junctions = floors.filter(([x, y]) => {
-    let open = 0;
-    if (!isWall(x + 1, y)) open++;
-    if (!isWall(x - 1, y)) open++;
-    if (!isWall(x, y + 1)) open++;
-    if (!isWall(x, y - 1)) open++;
-    return open >= 3;
-  });
+  // --- barriles metálicos arrimados a las paredes ---
+  if (P.barrels.count) {
+    const barrelGeo = new THREE.CylinderGeometry(0.32, 0.32, 0.92, 12);
+    const barrels = new THREE.InstancedMesh(barrelGeo, rustMat, P.barrels.count);
+    for (let i = 0; i < P.barrels.count; i++) {
+      const [x, y] = pickFloor();
+      const dirs = wallDirs(x, y);
+      const [wx, wz] = tileToWorld(x, y);
+      let ox = rand() - 0.5;
+      let oz = rand() - 0.5;
+      if (dirs.length) {
+        const [dx, dy] = dirs[(rand() * dirs.length) | 0];
+        ox = dx * (t / 2 - 0.46) + (rand() - 0.5) * 0.4 * (1 - Math.abs(dx));
+        oz = dy * (t / 2 - 0.46) + (rand() - 0.5) * 0.4 * (1 - Math.abs(dy));
+      }
+      dummy.position.set(wx + ox, 0.46, wz + oz);
+      dummy.rotation.set(0, rand() * Math.PI * 2, 0);
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      barrels.setMatrixAt(i, dummy.matrix);
+      barrels.setColorAt(i, col.setScalar(0.35 + rand() * 0.35)); // oscurecidos
+    }
+    barrels.instanceMatrix.needsUpdate = true;
+    if (barrels.instanceColor) barrels.instanceColor.needsUpdate = true;
+    barrels.castShadow = true;
+    barrels.receiveShadow = true;
+    scene.add(barrels);
+  }
 
+  // --- tarimas (pallets) recargadas contra las paredes ---
+  if (P.pallets.count) {
+    const parts = [];
+    for (let i = 0; i < 5; i++) { // tablones verticales
+      const g = new THREE.BoxGeometry(0.19, 1.15, 0.028);
+      g.translate(-0.46 + i * 0.23, 0, 0.03);
+      parts.push(g);
+    }
+    for (const yy of [-0.45, 0, 0.45]) { // travesaños
+      const g = new THREE.BoxGeometry(1.12, 0.19, 0.028);
+      g.translate(0, yy, 0);
+      parts.push(g);
+    }
+    const palletGeo = mergeGeometries(parts);
+    const pallets = new THREE.InstancedMesh(palletGeo, woodMat, P.pallets.count);
+    let placed = 0;
+    let guard = 0;
+    while (placed < P.pallets.count && guard++ < 200) {
+      const [x, y] = pickFloor();
+      if (isSpecial(x, y)) continue;
+      const dirs = wallDirs(x, y);
+      if (!dirs.length) continue;
+      const [dx, dy] = dirs[(rand() * dirs.length) | 0];
+      const [wx, wz] = tileToWorld(x, y);
+      dummy.position.set(wx + dx * (t / 2 - 0.22), 0.56, wz + dy * (t / 2 - 0.22));
+      dummy.rotation.set(0, 0, 0);
+      dummy.scale.set(1, 1, 1);
+      dummy.lookAt(wx, 0.56, wz);      // el frente mira al pasillo
+      dummy.rotateX(-0.24);            // recargada: la parte alta toca el muro
+      dummy.rotateZ((rand() - 0.5) * 0.12);
+      dummy.updateMatrix();
+      pallets.setMatrixAt(placed, dummy.matrix);
+      pallets.setColorAt(placed, col.setScalar(0.75 + rand() * 0.45));
+      placed++;
+    }
+    pallets.count = placed;
+    pallets.instanceMatrix.needsUpdate = true;
+    if (pallets.instanceColor) pallets.instanceColor.needsUpdate = true;
+    pallets.castShadow = true;
+    pallets.receiveShadow = true;
+    scene.add(pallets);
+  }
+
+  // --- libros y papeles tirados ---
+  if (P.clutter.books) {
+    const bookGeo = new THREE.BoxGeometry(0.24, 0.04, 0.17);
+    const bookMat = new THREE.MeshStandardMaterial({ roughness: 0.95 });
+    const books = new THREE.InstancedMesh(bookGeo, bookMat, P.clutter.books);
+    const bookTones = [0x6e6754, 0x4a3527, 0x36414a, 0x5a5148, 0x3d3026];
+    for (let i = 0; i < P.clutter.books; i++) {
+      const [x, y] = pickFloor();
+      const [wx, wz] = tileToWorld(x, y);
+      dummy.position.set(wx + (rand() - 0.5) * 1.8, 0.02, wz + (rand() - 0.5) * 1.8);
+      dummy.rotation.set(0, rand() * Math.PI * 2, 0);
+      const s = 0.8 + rand() * 0.7;
+      dummy.scale.set(s, 1, s);
+      dummy.updateMatrix();
+      books.setMatrixAt(i, dummy.matrix);
+      books.setColorAt(i, col.setHex(bookTones[(rand() * bookTones.length) | 0]));
+    }
+    books.instanceMatrix.needsUpdate = true;
+    if (books.instanceColor) books.instanceColor.needsUpdate = true;
+    books.castShadow = true;
+    scene.add(books);
+  }
+
+  // --- ropa sucia tirada, hecha bulto ---
+  if (P.clutter.cloth) {
+    const clothGeo = new THREE.IcosahedronGeometry(0.3, 1);
+    const clothMat = new THREE.MeshStandardMaterial({ roughness: 1 });
+    const cloth = new THREE.InstancedMesh(clothGeo, clothMat, P.clutter.cloth);
+    const clothTones = [0x33302e, 0x2c3038, 0x3a2f2a, 0x283130, 0x3b3437];
+    for (let i = 0; i < P.clutter.cloth; i++) {
+      const [x, y] = pickFloor();
+      const [wx, wz] = tileToWorld(x, y);
+      dummy.position.set(wx + (rand() - 0.5) * 1.6, 0.07, wz + (rand() - 0.5) * 1.6);
+      dummy.rotation.set(0, rand() * Math.PI * 2, 0);
+      const s = 0.7 + rand() * 0.8;
+      dummy.scale.set(s, s * 0.28, s * (0.7 + rand() * 0.5)); // aplastada
+      dummy.updateMatrix();
+      cloth.setMatrixAt(i, dummy.matrix);
+      cloth.setColorAt(i, col.setHex(clothTones[(rand() * clothTones.length) | 0]));
+    }
+    cloth.instanceMatrix.needsUpdate = true;
+    if (cloth.instanceColor) cloth.instanceColor.needsUpdate = true;
+    cloth.castShadow = true;
+    scene.add(cloth);
+  }
+
+  // --- vidrios rotos: cúmulos de esquirlas que brillan bajo la linterna ---
+  if (P.clutter.glassClusters) {
+    const shardGeo = new THREE.CircleGeometry(0.05, 3); // triángulo
+    const glassMat = new THREE.MeshStandardMaterial({
+      color: 0x8fa3ad,
+      roughness: 0.08,
+      metalness: 0.9,
+    });
+    const perCluster = 6;
+    const shards = new THREE.InstancedMesh(shardGeo, glassMat, P.clutter.glassClusters * perCluster);
+    let si = 0;
+    for (let cIdx = 0; cIdx < P.clutter.glassClusters; cIdx++) {
+      const [x, y] = pickFloor();
+      const [wx, wz] = tileToWorld(x, y);
+      const cx = wx + (rand() - 0.5) * 1.6;
+      const cz = wz + (rand() - 0.5) * 1.6;
+      for (let j = 0; j < perCluster; j++) {
+        dummy.position.set(cx + (rand() - 0.5) * 0.7, 0.011, cz + (rand() - 0.5) * 0.7);
+        dummy.rotation.set(-Math.PI / 2, 0, rand() * Math.PI * 2);
+        const s = 0.5 + rand() * 1.3;
+        dummy.scale.set(s, s, 1);
+        dummy.updateMatrix();
+        shards.setMatrixAt(si++, dummy.matrix);
+      }
+    }
+    shards.instanceMatrix.needsUpdate = true;
+    scene.add(shards);
+  }
+
+  // --- focos colgantes: islas de luz enferma repartidas por el laberinto ---
+  // Permiten avanzar sin linterna y le dan al lugar su cara macabra.
+  // El primero cuelga sobre la entrada: el jugador nunca despierta en negro.
   const lamps = [];
-  const chosen = [];
-  let guard = 0;
-  while (lamps.length < P.lamps.count && guard++ < 300 && junctions.length) {
-    const [x, y] = junctions[(rand() * junctions.length) | 0];
-    if (chosen.some(([cx, cy]) => Math.hypot(cx - x, cy - y) < 6)) continue;
-    chosen.push([x, y]);
+  const chosen = [maze.entry];
+  const lampAt = (x, y) => {
     const [wx, wz] = tileToWorld(x, y);
-    const fix = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.14, 0.22, 8), metalMat);
-    fix.position.set(wx, wallH - 0.12, wz);
-    const light = new THREE.PointLight(0xff9a5a, 9, 8, 2);
-    light.position.set(wx, wallH - 0.4, wz);
-    scene.add(fix, light);
-    lamps.push({ light, base: 9, seed: rand() * 100 });
+    const g = new THREE.Group();
+
+    const cord = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.6, 5), metalMat);
+    cord.position.y = wallH - 0.3;
+
+    const shade = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.16, 0.12, 10, 1, true), metalMat);
+    shade.position.y = wallH - 0.62;
+
+    const bulbMat = new THREE.MeshStandardMaterial({
+      color: 0x332f28,
+      emissive: 0xffc27a,
+      emissiveIntensity: 2.4,
+    });
+    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 8), bulbMat);
+    bulb.position.y = wallH - 0.7;
+
+    const base = 24 + rand() * 10;
+    const light = new THREE.PointLight(0xffb26a, base, 10, 2);
+    light.position.y = wallH - 0.78;
+
+    g.add(cord, shade, bulb, light);
+    g.position.set(wx, 0, wz);
+    scene.add(g);
+    lamps.push({ light, bulbMat, base, seed: rand() * 100 });
+  };
+  lampAt(maze.entry[0], maze.entry[1]);
+
+  let guard = 0;
+  while (lamps.length < P.lamps.count && guard++ < 500) {
+    const [x, y] = pickFloor();
+    if (isSpecial(x, y)) continue;
+    if (chosen.some(([cx, cy]) => Math.hypot(cx - x, cy - y) < P.lamps.minSepTiles)) continue;
+    chosen.push([x, y]);
+    lampAt(x, y);
   }
 
   // --- puerta de salida: metal oxidado, entreabierta, con una rendija de luz fría ---
@@ -274,5 +533,6 @@ export function buildMazeScene(scene, maze, CFG, rand) {
     lamps,
     exitTrigger: door.position.clone(),
     floors,
+    puddles: puddleList,
   };
 }
