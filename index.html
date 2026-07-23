@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="THE CLOSET — horror psicológico procedural. La luz te guía. La luz te delata." />
+  <title>THE CLOSET</title>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="vignette"></div>
+
+  <!-- HUD minimalista (GDD): batería + intensidad de luz. Nada más. -->
+  <div id="hud">
+    <div id="battery"><div id="battery-fill"></div></div>
+    <div id="light-dot"></div>
+  </div>
+
+  <div class="overlay" id="screen-start">
+    <h1>THE&nbsp;CLOSET</h1>
+    <p class="tag">La puerta se cerró detrás de ti.</p>
+    <p class="controls">WASD moverse&ensp;·&ensp;SHIFT correr&ensp;·&ensp;F / clic linterna</p>
+    <p class="hint">clic para entrar</p>
+    <p class="seed" id="seed-label"></p>
+  </div>
+
+  <div class="overlay hidden" id="screen-pause">
+    <p class="hint">clic para continuar</p>
+  </div>
+
+  <div class="overlay fade-black hidden" id="screen-dead">
+    <div id="dead-text" class="hidden">
+      <h1>TE&nbsp;ENCONTRÓ.</h1>
+      <p class="seed" id="dead-info"></p>
+      <p class="hint">ENTER mismo laberinto&ensp;·&ensp;R uno nuevo</p>
+    </div>
+  </div>
+
+  <div class="overlay fade-black hidden" id="screen-win">
+    <div id="win-text" class="hidden">
+      <h1>SALISTE.</h1>
+      <p class="seed" id="win-info"></p>
+      <p class="hint">ENTER mismo laberinto&ensp;·&ensp;R uno nuevo</p>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

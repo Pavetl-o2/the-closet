@@ -1,0 +1,147 @@
+/* ============================================================
+   THE CLOSET — UI
+   Paleta tomada de los materiales del propio laberinto:
+   yeso hueso, latón de lámpara vieja, tubería oxidada.
+   ============================================================ */
+:root {
+  --negro: #030404;
+  --hueso: #c6c9ba;
+  --laton: #c2b183;
+  --oxido: #9a4f33;
+  --apagado: #6a6f63;
+  --mono: ui-monospace, 'Cascadia Mono', 'Courier New', monospace;
+  --display: Georgia, 'Times New Roman', serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--negro);
+  overflow: hidden;
+}
+
+#app canvas { display: block; }
+
+#vignette {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 52%, rgba(0, 0, 0, 0.82) 100%);
+  z-index: 2;
+}
+
+/* ---------- overlays ---------- */
+.overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  background: rgba(2, 3, 3, 0.94);
+  color: var(--hueso);
+  text-align: center;
+  cursor: pointer;
+  z-index: 10;
+  padding: 24px;
+}
+
+.overlay h1 {
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: clamp(28px, 6vw, 54px);
+  letter-spacing: 0.5em;
+  padding-left: 0.5em; /* compensa el tracking del último carácter */
+  margin: 0 0 4px;
+  animation: parpadeo 7s infinite;
+}
+
+.tag {
+  font-family: var(--display);
+  font-style: italic;
+  color: var(--apagado);
+  margin: 0;
+}
+
+.controls {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  color: var(--apagado);
+  margin: 28px 0 0;
+}
+
+.hint {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  color: var(--laton);
+  margin: 0;
+}
+
+.seed {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: #3f443c;
+  margin-top: 26px;
+}
+
+.fade-black {
+  background: #000;
+  cursor: default;
+}
+
+.hidden { display: none !important; }
+
+/* ---------- HUD ---------- */
+#hud {
+  position: fixed;
+  left: 22px;
+  bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  z-index: 5;
+  pointer-events: none;
+}
+
+#battery {
+  width: 130px;
+  height: 5px;
+  background: #141613;
+  border: 1px solid #2c2f29;
+}
+
+#battery-fill {
+  height: 100%;
+  width: 100%;
+  background: var(--laton);
+  transition: width 0.35s linear, background 0.4s;
+}
+
+#battery-fill.low { background: var(--oxido); }
+
+#light-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #ffe9c4;
+  box-shadow: 0 0 8px 2px rgba(255, 233, 196, 0.55);
+  opacity: 0.12;
+  transition: opacity 0.18s;
+}
+
+/* Parpadeo sutil del título, como una lámpara que falla */
+@keyframes parpadeo {
+  0%, 88%, 92%, 96%, 100% { opacity: 1; }
+  90% { opacity: 0.55; }
+  94% { opacity: 0.8; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .overlay h1 { animation: none; }
+}
