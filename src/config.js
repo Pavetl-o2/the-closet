@@ -20,8 +20,43 @@ export const CONFIG = {
     exposure: 1.2,     // súbelo si tu pantalla es muy oscura
     fogColor: 0x04050a,
     fogDensity: 0.045, // más alto = menos visibilidad
-    maxPixelRatio: 1.75,
     ambientIntensity: 0.85, // luz base: siluetas navegables, nunca claridad
+  },
+
+  // Perfiles de calidad. El de escritorio es el original: nada cambia ahí.
+  // El táctil recorta lo que de verdad cuesta en un GPU de móvil — número de
+  // luces dinámicas, resolución del mapa de sombras, tamaño de texturas — y
+  // deja que la resolución se ajuste sola según el frame time.
+  QUALITY: {
+    desktop: {
+      antialias: true,
+      maxPixelRatio: 1.75,
+      minPixelRatio: 1.75,    // fijo: sin resolución adaptativa
+      adaptiveResolution: false,
+      shadows: true,
+      shadowMapSize: 1024,
+      softShadows: true,
+      maxLampLights: 999,     // todas las lámparas iluminan
+      drawDistance: 90,
+      monsterTextureSize: 0,  // 0 = se deja como viene en el GLB
+      maxHorizontalFov: 0,    // 0 = sin corrección (el FOV vertical manda)
+    },
+    touch: {
+      antialias: false,       // la resolución adaptativa da mejor rendimiento
+      maxPixelRatio: 1.3,
+      minPixelRatio: 0.6,
+      adaptiveResolution: true,
+      shadows: true,          // la sombra del haz es media atmósfera del juego
+      shadowMapSize: 512,
+      softShadows: false,
+      maxLampLights: 4,       // las lejanas conservan el foco encendido, sin luz
+      drawDistance: 55,
+      monsterTextureSize: 1024, // el GLB trae 4096² = 67 MB de VRAM
+      // Un teléfono en horizontal es tan panorámico (~2.2:1) que con 70° de
+      // FOV vertical el horizontal se va a 113° y el pasillo se ve en ojo de
+      // pez. Se acota el horizontal y el vertical se deduce.
+      maxHorizontalFov: 100,
+    },
   },
 
   PLAYER: {
@@ -31,6 +66,9 @@ export const CONFIG = {
     runSpeed: 5.4,
     accel: 11,             // respuesta del movimiento (más alto = más seco)
     lookSensitivity: 0.0023,
+    touchLookSensitivity: 0.0042, // el dedo recorre menos que el ratón
+    touchStickRadius: 66,  // px hasta el tope del joystick virtual
+    touchRunAt: 0.88,      // fracción del recorrido a partir de la cual corre
     bobAmp: 0.035,         // vaivén de cámara al caminar
     bobFreq: 6.0,
     runFovKick: 5,         // grados extra de FOV al correr

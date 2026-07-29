@@ -15,34 +15,67 @@ import { Monster, STATES } from './monster/monster.js';
 import { loadMonsterModel } from './monster/model.js';
 import { ProximityAudio } from './audio/proximity.js';
 import { HUD } from './ui/hud.js';
+import { detectDevice, AdaptiveResolution } from './core/device.js';
+import { TouchControls } from './input/touch.js';
 
 const seed = getSeedFromURL();
 const rand = mulberry32(seed);
 
+// Escritorio y táctil comparten todo el juego; solo cambian el perfil de
+// calidad y la capa de entrada (ver core/device.js).
+const { touch: isTouch, profile } = detectDevice();
+document.body.classList.toggle('touch', isTouch);
+
 // ---------- render ----------
-const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+const renderer = new THREE.WebGLRenderer({
+  antialias: profile.antialias,
+  powerPreference: 'high-performance',
+});
 renderer.setSize(innerWidth, innerHeight);
-renderer.setPixelRatio(Math.min(devicePixelRatio, CONFIG.RENDER.maxPixelRatio));
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.setPixelRatio(Math.min(devicePixelRatio, profile.maxPixelRatio));
+renderer.shadowMap.enabled = profile.shadows;
+renderer.shadowMap.type = profile.softShadows ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = CONFIG.RENDER.exposure;
 document.getElementById('app').appendChild(renderer.domElement);
 
+const adaptive = new AdaptiveResolution(renderer, profile);
+
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(CONFIG.RENDER.fov, innerWidth / innerHeight, 0.05, 90);
+const camera = new THREE.PerspectiveCamera(
+  CONFIG.RENDER.fov, innerWidth / innerHeight, 0.05, profile.drawDistance
+);
+
+// El FOV de three.js es el vertical. En una pantalla muy panorámica (un
+// teléfono en horizontal ronda 2.2:1) eso dispara el horizontal hasta el ojo
+// de pez, así que en táctil se acota el horizontal y el vertical se deduce.
+// En escritorio `maxHorizontalFov` es 0 y el FOV queda tal cual estaba.
+function applyAspect() {
+  const aspect = innerWidth / innerHeight;
+  camera.aspect = aspect;
+  let fov = CONFIG.RENDER.fov;
+  if (profile.maxHorizontalFov) {
+    const hMax = THREE.MathUtils.degToRad(profile.maxHorizontalFov);
+    const vFromH = 2 * Math.atan(Math.tan(hMax / 2) / aspect);
+    fov = Math.min(fov, THREE.MathUtils.radToDeg(vFromH));
+  }
+  camera.fov = fov;
+  player?.setBaseFov(fov);
+  camera.updateProjectionMatrix();
+}
 
 setupAtmosphere(scene, CONFIG);
 
 // ---------- mundo ----------
 const maze = generateMaze(CONFIG.MAZE, rand);
-const built = buildMazeScene(scene, maze, CONFIG, rand);
+const built = buildMazeScene(scene, maze, CONFIG, rand, profile);
 const M = built.mazeInfo;
 
 const player = new Player(camera, M, CONFIG.PLAYER, maze.entry);
 scene.add(player.rig);
+applyAspect();
 
-const flashlight = new Flashlight(scene, CONFIG.FLASHLIGHT);
+const flashlight = new Flashlight(scene, CONFIG.FLASHLIGHT, profile);
 
 const audio = new ProximityAudio(CONFIG.AUDIO);
 const hud = new HUD();
@@ -80,10 +113,10 @@ function spawnMonsters(proto) {
     monsters.push(mon);
   }
   monstersReady = true;
-  hud.setText('start-hint', 'clic para entrar');
+  hud.setText('start-hint', isTouch ? 'toca para entrar' : 'clic para entrar');
 }
 
-loadMonsterModel().then(spawnMonsters).catch((err) => {
+loadMonsterModel(profile).then(spawnMonsters).catch((err) => {
   console.error('no se pudo cargar el modelo del monstruo', err);
   spawnMonsters(null); // sin cuerpo visible, pero el laberinto sigue jugable
 });
@@ -91,6 +124,10 @@ loadMonsterModel().then(spawnMonsters).catch((err) => {
 // Luz de la secuencia de muerte: un fogonazo frío que revela al monstruo
 const revealLight = new THREE.PointLight(0xcfd6de, 0, 5, 2);
 scene.add(revealLight);
+
+// Primer reparto de luces, para que el mundo ya esté iluminado en el frame
+// inicial (el pool arranca a intensidad 0).
+updateLamps(built.lamps, built.lampPool, 0, player.position);
 
 // ---------- estados de partida ----------
 let state = 'start'; // start | playing | caught | paused | dead | win
@@ -123,6 +160,7 @@ function endRun(kind) {
   audio.silence();
   revealLight.intensity = 0;
   if (document.pointerLockElement) document.exitPointerLock();
+  touchControls?.setVisible(false);
   hud.show(kind); // negro inmediato; el texto llega después (GDD: negro y silencio)
   hud.setText(kind === 'dead' ? 'dead-info' : 'win-info', `semilla ${seed} · ${fmtTime(elapsed)}`);
   setTimeout(
@@ -138,63 +176,139 @@ function beginDeath(mon) {
   killer = mon;
   deathT = 0;
   player.enabled = false;
+  touchControls?.setVisible(false); // que nada tape el último plano
   audio.deathSting();
 }
 
-// ---------- input / pointer lock ----------
+// ---------- transiciones de estado (comunes a ratón y dedo) ----------
+function startPlaying() {
+  if (state !== 'start' && state !== 'paused') return;
+  state = 'playing';
+  player.enabled = true;
+  hud.hideAll();
+  lockGraceT = 0.25;
+  audio.resume();
+  touchControls?.setVisible(true);
+}
+
+function pauseGame() {
+  if (state !== 'playing') return;
+  state = 'paused';
+  player.enabled = false;
+  touchControls?.setVisible(false);
+  hud.show('pause');
+}
+
+function toggleLight() {
+  if (state === 'playing' && flashlight.toggle()) audio.click();
+}
+
+// ---------- input ----------
 const canvas = renderer.domElement;
-const requestLock = () => {
-  // Chrome impone ~1.5 s de espera para relockear tras ESC; si el clic
-  // llega antes, la promesa se rechaza: se ignora y el usuario reintenta.
-  const p = canvas.requestPointerLock();
-  if (p && typeof p.catch === 'function') p.catch(() => {});
-};
+let touchControls = null;
 
-document.getElementById('screen-start').addEventListener('click', () => {
-  if (!monstersReady) return; // el laberinto no se abre vacío
-  audio.init();
-  requestLock();
-});
-document.getElementById('screen-pause').addEventListener('click', requestLock);
+if (isTouch) {
+  // ---- móvil: joystick + arrastre, sin pointer lock ----
+  touchControls = new TouchControls(CONFIG.PLAYER, {
+    onLight: toggleLight,
+    onPause: pauseGame,
+  });
+  player.touch = touchControls;
 
-document.addEventListener('pointerlockchange', () => {
-  const locked = document.pointerLockElement === canvas;
-  if (locked) {
-    if (state === 'start' || state === 'paused') {
-      state = 'playing';
-      player.enabled = true;
-      hud.hideAll();
-      lockGraceT = 0.25;
-      audio.resume();
+  // Pantalla completa y horizontal: el gesto de entrada es la única
+  // oportunidad de pedirlas, y sin ellas la barra del navegador se come
+  // media pantalla en horizontal.
+  const goImmersive = async () => {
+    try {
+      if (!document.fullscreenElement) await document.documentElement.requestFullscreen();
+      await screen.orientation?.lock?.('landscape');
+    } catch { /* el navegador puede negarse; el juego funciona igual */ }
+  };
+
+  const isPortrait = () => innerHeight > innerWidth;
+  const rotateScreen = document.getElementById('screen-rotate');
+
+  const checkOrientation = () => {
+    const portrait = isPortrait();
+    rotateScreen.classList.toggle('hidden', !portrait);
+    if (portrait) pauseGame();
+  };
+
+  const tapToPlay = () => {
+    if (!monstersReady || isPortrait()) return;
+    audio.init();
+    goImmersive();
+    startPlaying();
+  };
+  document.getElementById('screen-start').addEventListener('click', tapToPlay);
+  document.getElementById('screen-pause').addEventListener('click', tapToPlay);
+
+  addEventListener('orientationchange', () => setTimeout(checkOrientation, 120));
+  checkOrientation();
+
+  // Al pasar la app a segundo plano, pausa: nadie quiere volver muerto.
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) pauseGame();
+  });
+
+  // En las pantallas de final no hay teclado: un toque genera otro laberinto.
+  // Solo se acepta una vez revelado el texto, para que el dedo que venía
+  // arrastrando en el momento de morir no reinicie la partida sin querer.
+  for (const [screen, text] of [['screen-dead', 'dead-text'], ['screen-win', 'win-text']]) {
+    document.getElementById(screen).addEventListener('click', () => {
+      const revealed = !document.getElementById(text).classList.contains('hidden');
+      if (revealed && (state === 'dead' || state === 'win')) {
+        reloadWithSeed((Math.random() * 2 ** 32) >>> 0);
+      }
+    });
+  }
+  for (const id of ['dead-again', 'win-again']) {
+    document.getElementById(id)?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      reloadWithSeed(seed);
+    });
+  }
+} else {
+  // ---- escritorio: pointer lock, exactamente como antes ----
+  const requestLock = () => {
+    // Chrome impone ~1.5 s de espera para relockear tras ESC; si el clic
+    // llega antes, la promesa se rechaza: se ignora y el usuario reintenta.
+    const p = canvas.requestPointerLock();
+    if (p && typeof p.catch === 'function') p.catch(() => {});
+  };
+
+  document.getElementById('screen-start').addEventListener('click', () => {
+    if (!monstersReady) return; // el laberinto no se abre vacío
+    audio.init();
+    requestLock();
+  });
+  document.getElementById('screen-pause').addEventListener('click', requestLock);
+
+  document.addEventListener('pointerlockchange', () => {
+    if (document.pointerLockElement === canvas) startPlaying();
+    else pauseGame();
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (document.pointerLockElement === canvas && state === 'playing') {
+      player.onMouseDelta(e.movementX, e.movementY);
     }
-  } else if (state === 'playing') {
-    state = 'paused';
-    player.enabled = false;
-    hud.show('pause');
-  }
-});
+  });
 
-document.addEventListener('mousemove', (e) => {
-  if (document.pointerLockElement === canvas && state === 'playing') {
-    player.onMouseDelta(e.movementX, e.movementY);
-  }
-});
-
-document.addEventListener('mousedown', (e) => {
-  if (
-    state === 'playing' &&
-    document.pointerLockElement === canvas &&
-    lockGraceT <= 0 &&
-    e.button === 0
-  ) {
-    if (flashlight.toggle()) audio.click();
-  }
-});
+  document.addEventListener('mousedown', (e) => {
+    if (
+      state === 'playing' &&
+      document.pointerLockElement === canvas &&
+      lockGraceT <= 0 &&
+      e.button === 0
+    ) {
+      toggleLight();
+    }
+  });
+}
 
 document.addEventListener('keydown', (e) => {
-  if (state === 'playing' && e.code === 'KeyF') {
-    if (flashlight.toggle()) audio.click();
-  }
+  if (state === 'playing' && e.code === 'KeyF') toggleLight();
   if (state === 'dead' || state === 'win') {
     if (e.code === 'Enter') reloadWithSeed(seed);
     if (e.code === 'KeyR') reloadWithSeed((Math.random() * 2 ** 32) >>> 0);
@@ -202,8 +316,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 addEventListener('resize', () => {
-  camera.aspect = innerWidth / innerHeight;
-  camera.updateProjectionMatrix();
+  applyAspect();
   renderer.setSize(innerWidth, innerHeight);
 });
 
@@ -215,14 +328,21 @@ function loop() {
   requestAnimationFrame(loop);
   const dt = Math.min(clock.getDelta(), 0.05);
 
+  adaptive.update(dt);
+
   if (state === 'playing') {
     elapsed += dt;
     if (lockGraceT > 0) lockGraceT -= dt;
 
+    if (touchControls) {
+      const [lx, ly] = touchControls.consumeLook();
+      if (lx || ly) player.onMouseDelta(lx, ly, CONFIG.PLAYER.touchLookSensitivity);
+    }
+
     player.update(dt);
     flashlight.update(dt, camera);
     for (const mon of monsters) mon.update(dt, player.position, flashlight);
-    updateLamps(built.lamps, elapsed);
+    updateLamps(built.lamps, built.lampPool, elapsed, player.position);
     audio.update(dt, monsters, player);
     hud.setBattery(flashlight.battery, flashlight.lightLevel);
 
@@ -284,5 +404,8 @@ loop();
 
 // Acceso de depuración (?debug en la URL): inspección desde consola
 if (new URLSearchParams(location.search).has('debug')) {
-  window.__game = { scene, camera, player, flashlight, monsters, built, maze, CONFIG };
+  window.__game = {
+    scene, camera, renderer, player, flashlight, monsters, built, maze,
+    CONFIG, profile, adaptive, isTouch,
+  };
 }

@@ -35,17 +35,24 @@ export class Player {
     this.moving = false;
     this.isRunning = false;
     this.enabled = false;
+    this.touch = null; // TouchControls en móvil; null en escritorio
 
     addEventListener('keydown', (e) => { this.keys[e.code] = true; });
     addEventListener('keyup', (e) => { this.keys[e.code] = false; });
     addEventListener('blur', () => { this.keys = Object.create(null); });
   }
 
-  onMouseDelta(mx, my) {
-    const s = this.cfg.lookSensitivity;
-    this.rig.rotation.y -= mx * s;
+  // El FOV base cambia si la pantalla es muy panorámica (ver applyAspect);
+  // el empuje al correr se suma sobre este valor.
+  setBaseFov(fov) {
+    this.baseFov = fov;
+  }
+
+  // `sens` permite que el dedo use otra sensibilidad que el ratón
+  onMouseDelta(mx, my, sens = this.cfg.lookSensitivity) {
+    this.rig.rotation.y -= mx * sens;
     this.pitchObj.rotation.x = THREE.MathUtils.clamp(
-      this.pitchObj.rotation.x - my * s, -1.45, 1.45
+      this.pitchObj.rotation.x - my * sens, -1.45, 1.45
     );
   }
 
@@ -56,9 +63,19 @@ export class Player {
     const c = this.cfg;
     const k = this.keys;
 
-    const iz = (k['KeyW'] || k['ArrowUp'] ? 1 : 0) - (k['KeyS'] || k['ArrowDown'] ? 1 : 0);
-    const ix = (k['KeyD'] || k['ArrowRight'] ? 1 : 0) - (k['KeyA'] || k['ArrowLeft'] ? 1 : 0);
-    const wantsRun = !!(k['ShiftLeft'] || k['ShiftRight']) && (iz !== 0 || ix !== 0);
+    let iz = (k['KeyW'] || k['ArrowUp'] ? 1 : 0) - (k['KeyS'] || k['ArrowDown'] ? 1 : 0);
+    let ix = (k['KeyD'] || k['ArrowRight'] ? 1 : 0) - (k['KeyA'] || k['ArrowLeft'] ? 1 : 0);
+    let wantsRun = !!(k['ShiftLeft'] || k['ShiftRight']) && (iz !== 0 || ix !== 0);
+
+    // El teclado es todo o nada; el joystick táctil es analógico y gradúa la
+    // velocidad con el recorrido del pulgar.
+    let analog = 1;
+    if (this.touch && (this.touch.move.x !== 0 || this.touch.move.z !== 0)) {
+      ix = this.touch.move.x;
+      iz = this.touch.move.z;
+      analog = this.touch.analog;
+      wantsRun = this.touch.running;
+    }
 
     // Base de movimiento en el plano (three: yaw 0 mira hacia -Z)
     const yaw = this.rig.rotation.y;
@@ -70,7 +87,8 @@ export class Player {
     const len = Math.hypot(wx, wz);
     if (len > 1e-4) { wx /= len; wz /= len; }
 
-    const speed = this.enabled && len > 1e-4 ? (wantsRun ? c.runSpeed : c.walkSpeed) : 0;
+    const base = wantsRun ? c.runSpeed : c.walkSpeed;
+    const speed = this.enabled && len > 1e-4 ? base * analog : 0;
     const blend = 1 - Math.exp(-c.accel * dt);
     this.vel.x += (wx * speed - this.vel.x) * blend;
     this.vel.z += (wz * speed - this.vel.z) * blend;

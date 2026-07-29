@@ -25,7 +25,33 @@ Para desplegar en Vercel basta con importar el repo: detecta Vite automáticamen
 
 ## Controles
 
-WASD o flechas para moverse, SHIFT para correr, F o clic izquierdo para la linterna, ESC pausa. Al morir o salir: ENTER repite el mismo laberinto, R genera uno nuevo. El juego está pensado para desktop con audífonos; los controles táctiles llegarán en una iteración posterior.
+**Escritorio:** WASD o flechas para moverse, SHIFT para correr, F o clic izquierdo para la linterna, ESC pausa. Al morir o salir: ENTER repite el mismo laberinto, R genera uno nuevo.
+
+**Móvil (horizontal):** pulgar izquierdo en cualquier punto de la mitad izquierda para el joystick — es analógico, el recorrido gradúa la velocidad y al llegar al tope se corre. Arrastrar en la mitad derecha para mirar. Botón **LUZ** abajo a la derecha para la linterna, **II** arriba a la derecha para pausar. En las pantallas de final, un toque genera otro laberinto y el botón *repetir este* rehace el mismo.
+
+En ambos casos, con audífonos.
+
+## Móvil
+
+El juego detecta el dispositivo y escoge uno de dos perfiles (`src/core/device.js`). Se puede forzar por URL para probar sin cambiar de máquina: `?mode=touch` o `?mode=desktop`.
+
+Al entrar en móvil se piden pantalla completa y orientación horizontal (el gesto del toque es la única oportunidad de pedirlas; si el navegador se niega, el juego funciona igual). En vertical aparece un aviso de girar el dispositivo y la partida se pausa, igual que al mandar la app a segundo plano.
+
+Qué recorta el perfil táctil, y por qué:
+
+| Ajuste | Escritorio | Táctil | Motivo |
+| --- | --- | --- | --- |
+| Luces dinámicas de lámpara | 12 (todas) | 4 más cercanas | El coste por fragmento de cada luz es lo que hunde el frame rate en un GPU de móvil. |
+| Resolución | fija (DPR hasta 1.75) | adaptativa, 0.6–1.3 | Se ajusta sola según el frame time: la palanca más eficaz y la que no hay que adivinar. |
+| Antialias | sí | no | Con resolución adaptativa rinde mejor gastar los píxeles en resolución. |
+| Mapa de sombras | 1024², PCF suave | 512², PCF | La sombra del haz es media atmósfera del juego, así que se conserva; solo baja de resolución. |
+| Textura del monstruo | 4096² (la del GLB) | 1024² | 4096² son ~67 MB de VRAM para algo que casi siempre se ve a oscuras y de lejos. |
+| Distancia de dibujado | 90 m | 55 m | La niebla ya no deja ver más allá. |
+| FOV | 70° vertical | horizontal acotado a 100° | Un teléfono en horizontal ronda 2.2:1: con 70° verticales el horizontal se va a 113° y el pasillo se ve en ojo de pez. |
+
+Las lámparas fuera del pool de luces **conservan la bombilla encendida**: a lo lejos se siguen viendo brillar, solo dejan de iluminar el entorno. Y el pool tiene tamaño fijo a propósito — cambiar el *número* de luces visibles obliga a three.js a recompilar los shaders, y eso es un tirón cada vez.
+
+Nada de esto toca la ruta de escritorio: los dos perfiles viven en `CONFIG.QUALITY` y la única bifurcación de código es la capa de entrada (pointer lock frente a joystick táctil). Verificado comparando la escena renderizada con la misma semilla antes y después.
 
 ## Semillas
 
@@ -37,6 +63,8 @@ Cada partida es un laberinto distinto. La semilla aparece en la pantalla de inic
 | --- | --- |
 | `src/config.js` | **Todos** los valores ajustables del juego, agrupados y comentados. |
 | `src/core/rng.js` | RNG determinista (mulberry32) + semilla por URL. |
+| `src/core/device.js` | Detección de dispositivo, perfil de calidad y resolución adaptativa. |
+| `src/input/touch.js` | Joystick analógico, arrastre de mirada y botones (solo móvil). |
 | `src/maze/generator.js` | Lógica pura: backtracker, salas, braiding, entrada/salida por doble BFS. |
 | `src/maze/nav.js` | BFS de distancias y caminos, línea de visión sobre la grilla. |
 | `src/maze/builder.js` | Geometría: muros instanciados, piso/techo, tuberías, cables, charcos, cajas, tarimas, barriles, libros, ropa, vidrios, manchas, focos colgantes, puerta de salida. |
@@ -58,6 +86,7 @@ Las perillas que más cambian la experiencia:
 
 1. `MAZE.cellCols/cellRows` — tamaño del laberinto (10×10 celdas ≈ partidas de 5–10 min).
 2. `RENDER.exposure`, `RENDER.ambientIntensity` y `RENDER.fogDensity` — cuánto se ve. Si tu pantalla es muy oscura, sube exposure a 1.4–1.6.
+2b. `QUALITY.desktop` / `QUALITY.touch` — rendimiento y alcance visual por plataforma (ver la sección *Móvil*).
 3. `PROPS.lamps.count` — cuántas islas de luz hay para avanzar sin linterna.
 4. `FLASHLIGHT.batterySeconds` — presión de recursos (420 s por defecto; aún no hay pickups).
 5. `MONSTER.count` y `MONSTER.height` — cuántas cosas patrullan el laberinto (2) y cuánto miden (2.05 m).
@@ -106,7 +135,9 @@ Una pasada final mide dónde acabó cada punta y reajusta el tobillo: el cabeceo
 
 ## Limitaciones conocidas de la Fase 1
 
-Los props (cajas, barriles, tarimas, tuberías…) son decorativos y no tienen colisión. No hay música. No hay pickups de batería (Fase 2). Solo desktop.
+Los props (cajas, barriles, tarimas, tuberías…) son decorativos y no tienen colisión. No hay música. No hay pickups de batería (Fase 2).
+
+En móvil no hay un tercer perfil para gama baja: si un teléfono no llega, la resolución adaptativa baja hasta 0.6 y ahí se queda (apagar sombras sería el siguiente escalón, ya cableado en `QUALITY.touch.shadows`). Tampoco se han medido teléfonos reales — los perfiles están razonados sobre lo que cuesta cada cosa, no calibrados con un dispositivo en mano.
 
 El ciclo de marcha del monstruo es único: no hay transiciones entre animaciones (arranque, frenada, giro), solo una mezcla suave de amplitud según la velocidad. La pierna arrastrada sí desliza al recuperarse — es intencional, así se lee el arrastre —, pero la pierna buena es la que sostiene la ilusión de que el paso corresponde al avance.
 
@@ -115,4 +146,4 @@ El ciclo de marcha del monstruo es único: no hay transiciones entre animaciones
 - [x] **Fase 1** — Movimiento · Linterna · Laberinto procedural · IA básica · Salida
 - [ ] **Fase 2** — Sonido espacial · Baterías · Eventos ambientales · Mejor IA (estado de Sospecha con evidencia sonora)
 - [ ] **Fase 3** — Laberinto dinámico · Linterna consciente · Variantes del monstruo (Tipos A/B/C)
-- [ ] **Fase 4** — Optimización · Demo
+- [ ] **Fase 4** — Optimización · Demo (móvil en horizontal ya soportado)

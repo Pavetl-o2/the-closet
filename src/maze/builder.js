@@ -16,7 +16,7 @@ import {
   makeStainTexture,
 } from '../world/textures.js';
 
-export function buildMazeScene(scene, maze, CFG, rand) {
+export function buildMazeScene(scene, maze, CFG, rand, quality) {
   const { grid, W, H } = maze;
   const t = CFG.MAZE.tile;
   const wallH = CFG.MAZE.wallHeight;
@@ -456,36 +456,26 @@ export function buildMazeScene(scene, maze, CFG, rand) {
   // --- focos colgantes: islas de luz enferma repartidas por el laberinto ---
   // Permiten avanzar sin linterna y le dan al lugar su cara macabra.
   // El primero cuelga sobre la entrada: el jugador nunca despierta en negro.
+  //
+  // Las PointLight no se cuelgan de cada foco: van en un pool de tamaño fijo
+  // que se reasigna a los focos más cercanos (ver updateLamps). Dos razones:
+  // el coste por fragmento de cada luz dinámica es lo que hunde el frame rate
+  // en móvil, y cambiar el NÚMERO de luces visibles obliga a three.js a
+  // recompilar los shaders — un tirón cada vez. Con un pool fijo, el conteo
+  // nunca cambia. Los focos sin luz asignada conservan la bombilla emisiva,
+  // así que a lo lejos se siguen viendo brillar.
   const lamps = [];
   const chosen = [maze.entry];
-  const lampAt = (x, y) => {
+  const addLamp = (x, y) => {
     const [wx, wz] = tileToWorld(x, y);
-    const g = new THREE.Group();
-
-    const cord = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.6, 5), metalMat);
-    cord.position.y = wallH - 0.3;
-
-    const shade = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.16, 0.12, 10, 1, true), metalMat);
-    shade.position.y = wallH - 0.62;
-
-    const bulbMat = new THREE.MeshStandardMaterial({
-      color: 0x332f28,
-      emissive: 0xffc27a,
-      emissiveIntensity: 2.4,
+    lamps.push({
+      x: wx, z: wz, y: wallH - 0.78,
+      base: 24 + rand() * 10,
+      seed: rand() * 100,
+      flicker: 1,
     });
-    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 8), bulbMat);
-    bulb.position.y = wallH - 0.7;
-
-    const base = 24 + rand() * 10;
-    const light = new THREE.PointLight(0xffb26a, base, 10, 2);
-    light.position.y = wallH - 0.78;
-
-    g.add(cord, shade, bulb, light);
-    g.position.set(wx, 0, wz);
-    scene.add(g);
-    lamps.push({ light, bulbMat, base, seed: rand() * 100 });
   };
-  lampAt(maze.entry[0], maze.entry[1]);
+  addLamp(maze.entry[0], maze.entry[1]);
 
   let guard = 0;
   while (lamps.length < P.lamps.count && guard++ < 500) {
@@ -493,7 +483,50 @@ export function buildMazeScene(scene, maze, CFG, rand) {
     if (isSpecial(x, y)) continue;
     if (chosen.some(([cx, cy]) => Math.hypot(cx - x, cy - y) < P.lamps.minSepTiles)) continue;
     chosen.push([x, y]);
-    lampAt(x, y);
+    addLamp(x, y);
+  }
+
+  // Cable + pantalla van instanciados, y las bombillas también: un material
+  // por foco significaba doce compilaciones de shader con quince luces cada
+  // una, y eso se nota como un tirón largo al arrancar. Así son dos mallas y
+  // dos programas para todas las lámparas.
+  if (lamps.length) {
+    const fixtureGeo = mergeGeometries([
+      new THREE.CylinderGeometry(0.012, 0.012, 0.6, 5).translate(0, wallH - 0.3, 0),
+      new THREE.CylinderGeometry(0.035, 0.16, 0.12, 10, 1, true).translate(0, wallH - 0.62, 0),
+    ]);
+    const fixtures = new THREE.InstancedMesh(fixtureGeo, metalMat, lamps.length);
+
+    // La bombilla no necesita iluminarse: emite. Un material básico sin tone
+    // mapping es el shader más barato posible y se lee como filamento.
+    const bulbGeo = new THREE.SphereGeometry(0.05, 8, 6);
+    const bulbMat = new THREE.MeshBasicMaterial({ color: 0xffd9a8, toneMapped: false });
+    const bulbs = new THREE.InstancedMesh(bulbGeo, bulbMat, lamps.length);
+
+    lamps.forEach((l, i) => {
+      dummy.position.set(l.x, 0, l.z);
+      dummy.rotation.set(0, 0, 0);
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      fixtures.setMatrixAt(i, dummy.matrix);
+      dummy.position.set(l.x, wallH - 0.7, l.z);
+      dummy.updateMatrix();
+      bulbs.setMatrixAt(i, dummy.matrix);
+      bulbs.setColorAt(i, col.setScalar(1));
+    });
+    fixtures.instanceMatrix.needsUpdate = true;
+    bulbs.instanceMatrix.needsUpdate = true;
+    scene.add(fixtures, bulbs);
+    // updateLamps modula el brillo de cada bombilla por color de instancia
+    lamps.bulbs = bulbs;
+  }
+
+  const lampPool = [];
+  const poolSize = Math.min(lamps.length, quality.maxLampLights);
+  for (let i = 0; i < poolSize; i++) {
+    const light = new THREE.PointLight(0xffb26a, 0, 10, 2);
+    scene.add(light);
+    lampPool.push(light);
   }
 
   // --- puerta de salida: metal oxidado, entreabierta, con una rendija de luz fría ---
@@ -531,6 +564,7 @@ export function buildMazeScene(scene, maze, CFG, rand) {
   return {
     mazeInfo: { grid, W, H, tileSize: t, tileToWorld, worldToTile, worldToTileF, isWall },
     lamps,
+    lampPool,
     exitTrigger: door.position.clone(),
     floors,
     puddles: puddleList,

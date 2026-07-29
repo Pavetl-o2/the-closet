@@ -2,7 +2,10 @@
 <html lang="es">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#030404" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="description" content="THE CLOSET — horror psicológico procedural. La luz te guía. La luz te delata." />
   <title>THE CLOSET</title>
 </head>
@@ -16,23 +19,42 @@
     <div id="light-dot"></div>
   </div>
 
+  <!-- Controles táctiles: solo se muestran en móvil, jugando -->
+  <div id="touch" class="hidden">
+    <div id="stick-zone">
+      <div id="stick-base"><div id="stick-knob"></div></div>
+    </div>
+    <div id="look-zone"></div>
+    <button id="btn-light" type="button" aria-label="linterna">LUZ</button>
+    <button id="btn-pause" type="button" aria-label="pausa">II</button>
+  </div>
+
   <div class="overlay" id="screen-start">
     <h1>THE&nbsp;CLOSET</h1>
     <p class="tag">La puerta se cerró detrás de ti.</p>
-    <p class="controls">WASD moverse&ensp;·&ensp;SHIFT correr&ensp;·&ensp;F / clic linterna</p>
+    <p class="controls only-desktop">WASD moverse&ensp;·&ensp;SHIFT correr&ensp;·&ensp;F / clic linterna</p>
+    <p class="controls only-touch">
+      pulgar izquierdo moverse&ensp;·&ensp;empuja al tope para correr<br />
+      arrastra a la derecha para mirar&ensp;·&ensp;LUZ enciende la linterna
+    </p>
     <p class="hint" id="start-hint">cargando&hellip;</p>
     <p class="seed" id="seed-label"></p>
   </div>
 
   <div class="overlay hidden" id="screen-pause">
-    <p class="hint">clic para continuar</p>
+    <p class="hint only-desktop">clic para continuar</p>
+    <p class="hint only-touch">toca para continuar</p>
   </div>
 
   <div class="overlay fade-black hidden" id="screen-dead">
     <div id="dead-text" class="hidden">
       <h1>TE&nbsp;ENCONTRÓ.</h1>
       <p class="seed" id="dead-info"></p>
-      <p class="hint">ENTER mismo laberinto&ensp;·&ensp;R uno nuevo</p>
+      <p class="hint only-desktop">ENTER mismo laberinto&ensp;·&ensp;R uno nuevo</p>
+      <p class="hint only-touch">
+        toca para otro laberinto<br />
+        <button class="again" id="dead-again" type="button">repetir este</button>
+      </p>
     </div>
   </div>
 
@@ -40,8 +62,18 @@
     <div id="win-text" class="hidden">
       <h1>SALISTE.</h1>
       <p class="seed" id="win-info"></p>
-      <p class="hint">ENTER mismo laberinto&ensp;·&ensp;R uno nuevo</p>
+      <p class="hint only-desktop">ENTER mismo laberinto&ensp;·&ensp;R uno nuevo</p>
+      <p class="hint only-touch">
+        toca para otro laberinto<br />
+        <button class="again" id="win-again" type="button">repetir este</button>
+      </p>
     </div>
+  </div>
+
+  <!-- El juego es de pasillos: en vertical no se ve nada -->
+  <div class="overlay hidden" id="screen-rotate">
+    <p class="tag">gira el teléfono</p>
+    <p class="hint">este laberinto se juega en horizontal</p>
   </div>
 
   <script type="module" src="/src/main.js"></script>

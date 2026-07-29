@@ -7,14 +7,17 @@ import * as THREE from 'three';
 const UP = new THREE.Vector3(0, 1, 0);
 
 export class Flashlight {
-  constructor(scene, cfg) {
+  constructor(scene, cfg, quality) {
     this.cfg = cfg;
 
     this.spot = new THREE.SpotLight(
       cfg.color, 0, cfg.distance, cfg.angle, cfg.penumbra, cfg.decay
     );
-    this.spot.castShadow = true;
-    this.spot.shadow.mapSize.set(1024, 1024);
+    // La sombra del haz es media atmósfera del juego, así que se conserva
+    // incluso en móvil; solo baja la resolución del mapa.
+    this.spot.castShadow = quality.shadows;
+    const sm = quality.shadowMapSize;
+    this.spot.shadow.mapSize.set(sm, sm);
     this.spot.shadow.bias = -0.0004;
     this.spot.shadow.camera.near = 0.3;
     this.spot.shadow.camera.far = cfg.distance + 4;

@@ -223,8 +223,9 @@ function rebindSkeleton(root) {
 
 let pending = null;
 
-// Carga única y compartida: todos los monstruos clonan el mismo prototipo.
-export function loadMonsterModel() {
+// Carga única y compartida: todos los monstruos clonan el mismo prototipo
+// (los clones comparten la textura, así que basta reescalarla aquí).
+export function loadMonsterModel(quality = null) {
   if (pending) return pending;
   pending = new Promise((resolve, reject) => {
     new GLTFLoader().load(
@@ -233,6 +234,7 @@ export function loadMonsterModel() {
         const root = gltf.scene;
         const skinned = rebindSkeleton(root);
         if (!skinned) { reject(new Error('el GLB no trae malla con esqueleto')); return; }
+        if (quality) shrinkTexture(skinned.material.map, quality.monsterTextureSize);
 
         // Altura real de la pose de reposo, para escalar a metros después
         const g = skinned.geometry;
@@ -251,6 +253,21 @@ export function loadMonsterModel() {
 // (cada monstruo varía de tono) y escalada a la altura pedida en metros.
 // El modelo mira a +Z; se gira para que el frente del grupo sea −Z, que es la
 // convención que usa el juego para orientar a los personajes.
+// El GLB trae una textura de 4096², unos 67 MB de VRAM ya descomprimida.
+// En móvil eso es demasiado para lo que se ve del monstruo (casi siempre a
+// oscuras y a distancia), así que se reescala en un canvas al cargar.
+function shrinkTexture(map, maxSize) {
+  const img = map?.image;
+  if (!maxSize || !img || !img.width || img.width <= maxSize) return;
+  const s = maxSize / img.width;
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(img.width * s));
+  c.height = Math.max(1, Math.round(img.height * s));
+  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  map.image = c;
+  map.needsUpdate = true;
+}
+
 export function createMonsterInstance(proto, { height, rand }) {
   const root = cloneSkeleton(proto.root);
   const s = height / proto.height;

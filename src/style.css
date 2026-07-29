@@ -22,6 +22,21 @@ html, body {
   overflow: hidden;
 }
 
+/* En móvil no debe haber ni zoom por doble toque, ni rebote al arrastrar,
+   ni resalte azul al tocar. */
+body {
+  touch-action: none;
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Los textos de ayuda cambian según la plataforma; body.touch lo decide */
+.only-touch { display: none; }
+body.touch .only-touch { display: block; }
+body.touch .only-desktop { display: none; }
+
 #app canvas { display: block; }
 
 #vignette {
@@ -97,6 +112,96 @@ html, body {
 
 .hidden { display: none !important; }
 
+.again {
+  margin-top: 14px;
+  padding: 10px 18px;
+  background: transparent;
+  border: 1px solid #3f443c;
+  color: var(--apagado);
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  cursor: pointer;
+}
+
+/* ---------- controles táctiles ---------- */
+/* Dos zonas invisibles a pantalla completa: mitad izquierda para el joystick
+   (con origen donde caiga el pulgar) y derecha para mirar. Encima, los dos
+   botones. Todo respeta el área segura del notch. */
+#touch {
+  position: fixed;
+  inset: 0;
+  z-index: 6;
+  touch-action: none;
+}
+
+#stick-zone, #look-zone {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  touch-action: none;
+}
+
+#stick-zone { left: 0; width: 45%; }
+#look-zone { right: 0; width: 55%; }
+
+/* El joystick solo se dibuja mientras el pulgar está apoyado */
+#stick-base {
+  position: fixed;
+  width: 132px;
+  height: 132px;
+  margin: -66px 0 0 -66px;
+  border: 1px solid rgba(198, 201, 186, 0.18);
+  border-radius: 50%;
+  opacity: 0;
+  transition: opacity 0.15s;
+  pointer-events: none;
+}
+
+#stick-base.active { opacity: 1; }
+
+#stick-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 46px;
+  height: 46px;
+  margin: -23px 0 0 -23px;
+  border-radius: 50%;
+  background: rgba(198, 201, 186, 0.14);
+  border: 1px solid rgba(198, 201, 186, 0.3);
+}
+
+#touch button {
+  position: absolute;
+  border-radius: 50%;
+  background: rgba(8, 9, 8, 0.45);
+  border: 1px solid rgba(198, 201, 186, 0.28);
+  color: var(--hueso);
+  font-family: var(--mono);
+  letter-spacing: 0.08em;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#btn-light {
+  right: calc(20px + env(safe-area-inset-right));
+  bottom: calc(20px + env(safe-area-inset-bottom));
+  width: 78px;
+  height: 78px;
+  font-size: 13px;
+}
+
+#btn-light:active { background: rgba(194, 177, 131, 0.28); }
+
+#btn-pause {
+  right: calc(20px + env(safe-area-inset-right));
+  top: calc(16px + env(safe-area-inset-top));
+  width: 44px;
+  height: 44px;
+  font-size: 12px;
+}
+
 /* ---------- HUD ---------- */
 #hud {
   position: fixed;
@@ -107,6 +212,12 @@ html, body {
   gap: 12px;
   z-index: 5;
   pointer-events: none;
+}
+
+body.touch #hud {
+  left: calc(22px + env(safe-area-inset-left));
+  top: calc(16px + env(safe-area-inset-top));
+  bottom: auto; /* abajo a la izquierda vive el pulgar del joystick */
 }
 
 #battery {
@@ -145,3 +256,17 @@ html, body {
 @media (prefers-reduced-motion: reduce) {
   .overlay h1 { animation: none; }
 }
+
+/* Horizontal en un teléfono deja muy poca altura: se comprime la tipografía
+   de los overlays para que quepa sin recortar. */
+@media (orientation: landscape) and (max-height: 520px) {
+  .overlay { gap: 8px; padding: 14px; }
+  .overlay h1 { font-size: clamp(22px, 4.6vw, 34px); letter-spacing: 0.34em; }
+  .controls { margin-top: 14px; font-size: 11px; }
+  .seed { margin-top: 12px; }
+  #btn-light { width: 66px; height: 66px; font-size: 12px; }
+  #stick-base { width: 112px; height: 112px; margin: -56px 0 0 -56px; }
+}
+
+/* El aviso de girar el dispositivo tapa todo y no se puede descartar */
+#screen-rotate { z-index: 20; cursor: default; }
