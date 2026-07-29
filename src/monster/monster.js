@@ -13,6 +13,8 @@
 
 import * as THREE from 'three';
 import { bfsPath, losClear } from '../maze/nav.js';
+import { createMonsterInstance } from './model.js';
+import { ZombieAnimator } from './animation.js';
 
 export const STATES = {
   IDLE: 'IDLE',
@@ -26,17 +28,18 @@ function shortestAngle(a) {
 }
 
 export class Monster {
-  constructor(scene, mazeInfo, cfg, rand, spawnTile, debug = false) {
+  constructor(scene, mazeInfo, cfg, rand, spawnTile, debug = false, modelProto = null) {
     this.maze = mazeInfo;
     this.cfg = cfg;
     this.rand = rand;
     this.debug = debug;
 
     this.group = new THREE.Group();
-    this.buildMesh();
+    this.buildMesh(modelProto);
     const [wx, wz] = mazeInfo.tileToWorld(spawnTile[0], spawnTile[1]);
     this.group.position.set(wx, 0, wz);
     scene.add(this.group);
+    this.prevPos = new THREE.Vector3(wx, 0, wz);
 
     this.floorTiles = [];
     for (let y = 0; y < mazeInfo.H; y++) {
@@ -60,64 +63,20 @@ export class Monster {
     this.time = rand() * 10;
     this.isMoving = false;
     this.hasCaught = false;
-    this.lungeAmount = 0;
     this.distanceToPlayer = Infinity;
   }
 
-  buildMesh() {
-    // Humanoide pálido y esquelético, sin rostro: la piel enfermiza refleja
-    // la luz de los focos y de la linterna — verlo a lo lejos, quieto al
-    // fondo de un pasillo, es el corazón de la imagen del juego.
-    const tone = 0.16 + this.rand() * 0.04;
-    const skin = new THREE.MeshStandardMaterial({
-      color: new THREE.Color(tone, tone * 0.92, tone * 0.84),
-      roughness: 0.85,
+  buildMesh(proto) {
+    // Humanoide pálido y esquelético: la piel enfermiza recoge la luz de los
+    // focos y del haz de la linterna — verlo a lo lejos, quieto al fondo de
+    // un pasillo, es el corazón de la imagen del juego.
+    if (!proto) return; // el modelo aún no cargó: la IA corre igual, sin cuerpo
+    const visual = createMonsterInstance(proto, {
+      height: this.cfg.height,
+      rand: this.rand,
     });
-    this.body = new THREE.Group();
-
-    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.16, 0.62, 4, 8), skin);
-    torso.position.y = 1.32;
-    torso.scale.set(1, 1, 0.72); // pecho hundido
-    torso.castShadow = true;
-
-    const pelvis = new THREE.Mesh(new THREE.SphereGeometry(0.15, 8, 8), skin);
-    pelvis.position.y = 0.98;
-    pelvis.scale.set(1, 0.7, 0.8);
-    pelvis.castShadow = true;
-
-    const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.18, 6), skin);
-    neck.position.y = 1.78;
-
-    this.head = new THREE.Mesh(new THREE.SphereGeometry(0.11, 10, 10), skin);
-    this.head.position.y = 1.95;
-    this.head.scale.set(1, 1.35, 1.05); // cráneo alargado, sin rasgos
-    this.head.castShadow = true;
-
-    // Brazos larguísimos, colgando hasta las rodillas; pivote en el hombro
-    const armGeo = new THREE.CapsuleGeometry(0.042, 0.82, 4, 6);
-    armGeo.translate(0, -0.45, 0);
-    this.armL = new THREE.Mesh(armGeo, skin);
-    this.armL.position.set(-0.22, 1.62, 0);
-    this.armL.rotation.z = 0.1;
-    this.armL.castShadow = true;
-    this.armR = new THREE.Mesh(armGeo.clone(), skin);
-    this.armR.position.set(0.22, 1.62, 0);
-    this.armR.rotation.z = -0.1;
-    this.armR.castShadow = true;
-
-    // Piernas con pivote en la cadera
-    const legGeo = new THREE.CapsuleGeometry(0.055, 0.85, 4, 6);
-    legGeo.translate(0, -0.5, 0);
-    this.legL = new THREE.Mesh(legGeo, skin);
-    this.legL.position.set(-0.1, 0.98, 0);
-    this.legL.castShadow = true;
-    this.legR = new THREE.Mesh(legGeo.clone(), skin);
-    this.legR.position.set(0.1, 0.98, 0);
-    this.legR.castShadow = true;
-
-    this.body.add(torso, pelvis, neck, this.head, this.armL, this.armR, this.legL, this.legR);
-    this.body.rotation.x = -0.06; // encorvado hacia el frente
-    this.group.add(this.body);
+    this.group.add(visual.holder);
+    this.anim = new ZombieAnimator(visual.bones, visual.root, this.rand);
   }
 
   setState(s) {
@@ -248,18 +207,10 @@ export class Monster {
     const targetYaw = Math.atan2(-dx, -dz);
     this.group.rotation.y += shortestAngle(targetYaw - this.group.rotation.y) * Math.min(1, 14 * dt);
 
-    // Zarpazo: brazos al frente, cabeza volcada hacia la cámara
-    this.lungeAmount = Math.min(1, this.lungeAmount + 5 * dt);
-    const a = this.lungeAmount;
-    this.armL.rotation.x = 1.5 * a;
-    this.armR.rotation.x = 1.5 * a;
-    this.armL.rotation.z = 0.1 - 0.25 * a;
-    this.armR.rotation.z = -0.1 + 0.25 * a;
-    this.legL.rotation.x = 0;
-    this.legR.rotation.x = 0;
-    this.head.rotation.x = 0.5 * a;
-    this.body.rotation.x = -0.06 - 0.3 * a;
-    this.body.position.y = 0;
+    if (this.anim) {
+      this.anim.startLunge();
+      this.anim.update(dt, {});
+    }
   }
 
   // ---------- ciclo principal ----------
@@ -382,21 +333,28 @@ export class Monster {
 
     if (d < c.catchDistance) this.hasCaught = true;
 
-    // Animación: ciclo de marcha rígido, más frenético en cacería
+    // ---------------- animación ----------------
+    // El ciclo de marcha se alimenta de la distancia realmente recorrida en
+    // este frame, no de un reloj: así la zancada siempre corresponde al
+    // desplazamiento y los pies no patinan a ninguna velocidad.
     this.time += dt;
-    const animSpeed = this.state === STATES.HUNT ? 11 : 5.5;
-    const swing = Math.sin(this.time * animSpeed);
-    const amp = this.isMoving ? (this.state === STATES.HUNT ? 0.75 : 0.4) : 0;
-    this.armL.rotation.x += (swing * amp - this.armL.rotation.x) * Math.min(1, 10 * dt);
-    this.armR.rotation.x += (-swing * amp - this.armR.rotation.x) * Math.min(1, 10 * dt);
-    this.legL.rotation.x += (-swing * amp - this.legL.rotation.x) * Math.min(1, 10 * dt);
-    this.legR.rotation.x += (swing * amp - this.legR.rotation.x) * Math.min(1, 10 * dt);
-    this.body.position.y = this.isMoving
-      ? Math.abs(Math.sin(this.time * animSpeed)) * 0.04
-      : Math.sin(this.time * 1.3) * 0.02;
-    // La cabeza barre los alrededores cuando busca; se clava al frente cazando
-    this.head.rotation.y = this.state === STATES.HUNT
-      ? 0
-      : Math.sin(this.time * 0.9) * 0.55;
+    const moved = Math.hypot(m.x - this.prevPos.x, m.z - this.prevPos.z);
+    this.prevPos.set(m.x, 0, m.z);
+
+    if (this.anim) {
+      const hunting = this.state === STATES.HUNT;
+      // Cuando te tiene fichado, la cabeza te sigue aunque el cuerpo aún gire
+      let lookYaw = 0;
+      if (hunting || this.state === STATES.INVESTIGATE) {
+        const want = Math.atan2(-dx, -dz);
+        lookYaw = Math.max(-1, Math.min(1, shortestAngle(want - this.group.rotation.y)));
+      }
+      this.anim.update(dt, {
+        moved,
+        speed: dt > 0 ? moved / dt : 0,
+        hunting,
+        lookYaw,
+      });
+    }
   }
 }

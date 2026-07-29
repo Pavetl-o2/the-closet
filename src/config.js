@@ -58,6 +58,7 @@ export const CONFIG = {
 
   MONSTER: {
     count: 2,                // más de uno: los encuentros dejan de ser raros
+    height: 2.05,            // metros: más alto que el jugador (1.65 de ojos)
     patrolSpeed: 1.7,
     investigateSpeed: 2.7,
     // El dilema central: con la luz encendida la cacería es imposible de

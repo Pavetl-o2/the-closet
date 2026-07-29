@@ -12,6 +12,7 @@ import { setupAtmosphere, updateLamps } from './world/atmosphere.js';
 import { Player } from './player/player.js';
 import { Flashlight } from './flashlight/flashlight.js';
 import { Monster, STATES } from './monster/monster.js';
+import { loadMonsterModel } from './monster/model.js';
 import { ProximityAudio } from './audio/proximity.js';
 import { HUD } from './ui/hud.js';
 
@@ -48,32 +49,44 @@ const hud = new HUD();
 hud.setText('seed-label', `semilla ${seed}`);
 
 // Los monstruos aparecen lejos de la entrada y lejos entre sí
-// (nunca de forma injusta).
+// (nunca de forma injusta). El modelo se carga aparte; hasta que llegue no
+// se deja empezar la partida, para que nadie camine por un laberinto vacío.
 const distFromEntry = bfsDistances(maze.grid, maze.entry).dist;
 const monsters = [];
-const spawnTiles = [];
-for (let i = 0; i < CONFIG.MONSTER.count; i++) {
-  let candidates = [];
-  for (let y = 0; y < M.H; y++) {
-    for (let x = 0; x < M.W; x++) {
-      const d = distFromEntry[y * M.W + x];
-      if (d < CONFIG.MONSTER.minSpawnDistTiles) continue;
-      if (x === maze.exit[0] && y === maze.exit[1]) continue;
-      if (spawnTiles.some(([sx, sy]) => Math.hypot(sx - x, sy - y) < CONFIG.MONSTER.minSeparationTiles)) {
-        continue;
+let monstersReady = false;
+
+function spawnMonsters(proto) {
+  const spawnTiles = [];
+  for (let i = 0; i < CONFIG.MONSTER.count; i++) {
+    let candidates = [];
+    for (let y = 0; y < M.H; y++) {
+      for (let x = 0; x < M.W; x++) {
+        const d = distFromEntry[y * M.W + x];
+        if (d < CONFIG.MONSTER.minSpawnDistTiles) continue;
+        if (x === maze.exit[0] && y === maze.exit[1]) continue;
+        if (spawnTiles.some(([sx, sy]) => Math.hypot(sx - x, sy - y) < CONFIG.MONSTER.minSeparationTiles)) {
+          continue;
+        }
+        candidates.push([x, y]);
       }
-      candidates.push([x, y]);
     }
+    if (!candidates.length) candidates = [maze.exit];
+    const tile = candidates[(rand() * candidates.length) | 0];
+    spawnTiles.push(tile);
+    const mon = new Monster(scene, M, CONFIG.MONSTER, rand, tile, CONFIG.DEBUG, proto);
+    mon.onState = (from, to) => {
+      if (to === STATES.HUNT) audio.huntSting();
+    };
+    monsters.push(mon);
   }
-  if (!candidates.length) candidates = [maze.exit];
-  const tile = candidates[(rand() * candidates.length) | 0];
-  spawnTiles.push(tile);
-  const mon = new Monster(scene, M, CONFIG.MONSTER, rand, tile, CONFIG.DEBUG);
-  mon.onState = (from, to) => {
-    if (to === STATES.HUNT) audio.huntSting();
-  };
-  monsters.push(mon);
+  monstersReady = true;
+  hud.setText('start-hint', 'clic para entrar');
 }
+
+loadMonsterModel().then(spawnMonsters).catch((err) => {
+  console.error('no se pudo cargar el modelo del monstruo', err);
+  spawnMonsters(null); // sin cuerpo visible, pero el laberinto sigue jugable
+});
 
 // Luz de la secuencia de muerte: un fogonazo frío que revela al monstruo
 const revealLight = new THREE.PointLight(0xcfd6de, 0, 5, 2);
@@ -138,6 +151,7 @@ const requestLock = () => {
 };
 
 document.getElementById('screen-start').addEventListener('click', () => {
+  if (!monstersReady) return; // el laberinto no se abre vacío
   audio.init();
   requestLock();
 });
@@ -254,7 +268,7 @@ function loop() {
     // Fogonazo tembloroso que lo revela aunque tu linterna esté apagada
     camera.getWorldPosition(_camPos);
     revealLight.position.copy(_camPos);
-    revealLight.intensity = Math.min(1, deathT / 0.12) * 30 * (Math.random() < 0.14 ? 0.35 : 1);
+    revealLight.intensity = Math.min(1, deathT / 0.12) * 16 * (Math.random() < 0.14 ? 0.35 : 1);
 
     // Sacudida de cámara mientras lo tienes encima
     camera.position.x = (Math.random() - 0.5) * 0.02;
