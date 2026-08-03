@@ -40,6 +40,9 @@ export const CONFIG = {
       drawDistance: 90,
       monsterTextureSize: 0,  // 0 = se deja como viene en el GLB
       maxHorizontalFov: 0,    // 0 = sin corrección (el FOV vertical manda)
+      audioVoices: 24,        // voces espaciales simultáneas
+      hrtf: true,             // HRTF es lo que distingue delante de detrás
+      reverb: true,
     },
     touch: {
       antialias: false,       // la resolución adaptativa da mejor rendimiento
@@ -56,6 +59,11 @@ export const CONFIG = {
       // FOV vertical el horizontal se va a 113° y el pasillo se ve en ojo de
       // pez. Se acota el horizontal y el vertical se deduce.
       maxHorizontalFov: 100,
+      // El HRTF se mantiene en móvil: es justo lo que da la información que
+      // salva la vida. Lo que se recorta es cuántas voces suenan a la vez.
+      audioVoices: 12,
+      hrtf: true,
+      reverb: true,
     },
   },
 
@@ -128,12 +136,15 @@ export const CONFIG = {
   },
 
   AUDIO: {
-    enabled: true,      // adelanto mínimo de Fase 2: pasos del monstruo, por fairness
-    maxDistance: 18,    // metros a partir de los cuales ya no se escucha nada
+    enabled: true,
+    maxDistance: 22,      // metros a partir de los cuales ya no se escucha nada
     masterVolume: 0.5,
-    droneMaxDistance: 12, // presencia: zumbido grave cuando un monstruo se acerca
+    refDistance: 1.6,     // distancia a la que el sonido suena a volumen pleno
+    rolloff: 1.15,        // cuán rápido cae con la distancia (modelo inverso)
+    reverbLevel: 0.5,     // cuánto pasillo se oye rebotar
+    droneMaxDistance: 14, // presencia: zumbido grave cuando un monstruo se acerca
     breathDistance: 6,    // respiración audible a menos de esta distancia
-    ambient: true,        // golpes/goteos lejanos aleatorios (ambiente)
+    ambient: true,        // goteras y crujidos desde casillas reales
   },
 
   PROPS: {

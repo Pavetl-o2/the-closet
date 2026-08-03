@@ -13,7 +13,8 @@ import { Player } from './player/player.js';
 import { Flashlight } from './flashlight/flashlight.js';
 import { Monster, STATES } from './monster/monster.js';
 import { loadMonsterModel } from './monster/model.js';
-import { ProximityAudio } from './audio/proximity.js';
+import { AudioEngine } from './audio/engine.js';
+import { Soundscape } from './audio/soundscape.js';
 import { HUD } from './ui/hud.js';
 import { detectDevice, AdaptiveResolution } from './core/device.js';
 import { TouchControls } from './input/touch.js';
@@ -77,7 +78,8 @@ applyAspect();
 
 const flashlight = new Flashlight(scene, CONFIG.FLASHLIGHT, profile);
 
-const audio = new ProximityAudio(CONFIG.AUDIO);
+const audio = new Soundscape(new AudioEngine(CONFIG.AUDIO, profile), CONFIG.AUDIO);
+audio.setWorld(M, built.floors);
 const hud = new HUD();
 hud.setText('seed-label', `semilla ${seed}`);
 
@@ -343,7 +345,7 @@ function loop() {
     flashlight.update(dt, camera);
     for (const mon of monsters) mon.update(dt, player.position, flashlight);
     updateLamps(built.lamps, built.lampPool, elapsed, player.position);
-    audio.update(dt, monsters, player);
+    audio.update(dt, monsters, player, camera);
     hud.setBattery(flashlight.battery, flashlight.lightLevel);
 
     // Pisar un charco delata tu posición: los monstruos que lo oyen
@@ -355,7 +357,7 @@ function loop() {
         const dz = player.position.z - p.z;
         if (dx * dx + dz * dz < p.r * p.r) {
           splashCd = CONFIG.PROPS.puddles.splashCooldown;
-          audio.splash(player.isRunning);
+          audio.splash(player.isRunning, player.position);
           for (const mon of monsters) {
             if (mon.distanceToPlayer < CONFIG.MONSTER.hearingRange) mon.hearNoise();
           }
@@ -406,6 +408,6 @@ loop();
 if (new URLSearchParams(location.search).has('debug')) {
   window.__game = {
     scene, camera, renderer, player, flashlight, monsters, built, maze,
-    CONFIG, profile, adaptive, isTouch,
+    CONFIG, profile, adaptive, isTouch, audio,
   };
 }

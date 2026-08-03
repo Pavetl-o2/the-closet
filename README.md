@@ -76,7 +76,8 @@ Cada partida es un laberinto distinto. La semilla aparece en la pantalla de inic
 | `src/monster/model.js` | Carga del GLB, reparación del rig y repesado de la piel. |
 | `src/monster/animation.js` | Ciclo de marcha de zombi: cojera, pie arrastrado y piernas por cinemática inversa. |
 | `src/assets/monster.glb` | Modelo del monstruo (malla + esqueleto). Único asset externo del proyecto. |
-| `src/audio/proximity.js` | Adelanto mínimo de Fase 2: pasos por monstruo, zumbido de presencia, respiración, estridencia de cacería, chapoteos, ambiente lejano (Web Audio sintetizado). |
+| `src/audio/engine.js` | Motor espacial: listener orientado, HRTF por fuente, oclusión por muros, reverb de pasillo, fábricas de voz. |
+| `src/audio/soundscape.js` | Qué suena y cuándo: pasos, presencia, respiración, chapoteos, ambiente, estridencias. |
 | `src/ui/hud.js` | Batería + punto de intensidad de luz, y las pantallas de inicio/pausa/final. |
 | `scripts/test-maze.mjs` | Test de conectividad y estadísticas del generador. |
 
@@ -93,6 +94,7 @@ Las perillas que más cambian la experiencia:
 6. `MONSTER.huntSpeedLit/huntSpeedDark` vs `PLAYER.runSpeed` — la sensación de las persecuciones con y sin luz.
 7. `MONSTER.patrolBiasNearPlayer` — frecuencia de encuentros (0 = patrulla 100% aleatoria).
 8. `MONSTER.awarenessInvestigate/awarenessHunt` — cuánta luz "aguanta" antes de reaccionar.
+9. `AUDIO.reverbLevel`, `AUDIO.rolloff` y `AUDIO.refDistance` — cuánto pasillo se oye rebotar y a qué ritmo cae el sonido con la distancia.
 
 `?debug` en la URL expone `window.__game` en consola para inspección.
 
@@ -129,13 +131,34 @@ Una pasada final mide dónde acabó cada punta y reajusta el tobillo: el cabeceo
 
 **La batería ya drena, aunque los pickups lleguen en Fase 2.** Los estados de batería (100/75/50/25/10/0) son la identidad de la linterna según el GDD, así que se implementaron completos: menos intensidad, menos alcance, cono más cerrado, y parpadeo con interferencia por debajo del 10%. Con 7 minutos de luz total, la partida se puede completar sin pickups si la administras.
 
-**Audio mínimo adelantado, por justicia.** El GDD deja el sonido para la Fase 2, pero sin ninguna pista sonora el monstruo podría alcanzarte sin aviso posible, y eso rompe la regla "nunca aparecer de forma injusta". Todo es Web Audio sintetizado, sin assets: pasos de cada monstruo (volumen por distancia, paneo por dirección), un zumbido grave de presencia que crece con la cercanía, respiración cuando lo tienes casi encima, una estridencia inconfundible cuando una cacería comienza, chapoteos al pisar charcos y goteos/golpes lejanos ocasionales. Se apaga con `AUDIO.enabled = false`.
+**El audio es espacial de verdad (Fase 2, paso 1).** Antes todo se paneaba en estéreo con un producto punto contra tu vector derecha. Eso tenía dos agujeros que anulaban media atmósfera:
+
+- **Delante y detrás sonaban idénticos.** Ambas posiciones dan paneo 0. En un juego cuya única defensa es escuchar, eso es grave.
+- **No había oclusión.** Un monstruo al otro lado de un muro sonaba igual que uno en tu mismo pasillo, aunque la herramienta ya estaba escrita: `losClear()`, que la IA usa para ver.
+
+Ahora hay un grafo real: listener orientado con la cámara, un `PannerNode` con HRTF por fuente, oclusión que reutiliza `losClear()` con tres rayos, y una reverb de pasillo con impulso generado (reflexiones tempranas de las dos paredes paralelas más cola que se oscurece). Medido renderizando el grafo real en un `OfflineAudioContext`:
+
+| Medición | Resultado |
+| --- | --- |
+| Fuente a la izquierda / derecha | 2.7× más fuerte en el canal correspondiente, simétrico |
+| Delante vs detrás, **con HRTF** | difieren un 59 % de su propio RMS; detrás suena un 22 % más flojo y un 37 % más apagado |
+| Delante vs detrás, **paneo plano** | diferencia **exactamente 0**: señales idénticas |
+| Distancia 2 m → 16 m | 8.5× más flojo, y los agudos caen 8.7× (absorción del aire) |
+| Oclusión en laberinto real (2 524 muestras) | 21 % despejado · 71 % tapado · 8.6 % parcial en esquinas y huecos |
+
+La fila del paneo plano es la que importa: con el sistema anterior, delante y detrás eran **matemáticamente la misma señal**. Ahora no. Y como la oclusión sale de la misma función que usa la IA, lo que oyes y lo que el monstruo puede percibir están construidos sobre la misma geometría.
+
+El motor no decide qué suena: solo cómo llega al oído. Las fuentes se crean con fábricas de voz (`noiseAt`, `toneAt`, `emitter`), que es el punto donde entrarán los samples grabados sin tocar el grafo.
+
+**Todo sigue sintetizado, sin assets.** Pasos de cada monstruo (con el roce del pie muerto alternando), un zumbido grave de presencia que ahora **sale del monstruo** en vez de la mezcla, así que se puede localizar; respiración a la altura de su cara cuando lo tienes encima; una estridencia inconfundible al arrancar una cacería; chapoteos al pisar charcos, que rebotan por el pasillo y son justo el ruido que te delata; y goteras y crujidos desde **casillas reales del laberinto**, no paneos al azar — así que también se ocluyen: un goteo detrás de un muro suena sordo, y eso es información, no decorado. Se apaga con `AUDIO.enabled = false`.
 
 **La muerte te lo muestra un instante.** Captura → tu mirada se gira hacia él, se echa encima con los brazos estirados y la cara volcada sobre la cámara, y un fogonazo tembloroso lo revela durante nueve décimas de segundo; después, corte a negro y silencio (GDD). Verlo de cerca solo al morir mantiene el resto del misterio intacto.
 
 ## Limitaciones conocidas de la Fase 1
 
 Los props (cajas, barriles, tarimas, tuberías…) son decorativos y no tienen colisión. No hay música. No hay pickups de batería (Fase 2).
+
+Del audio queda por hacer: el jugador todavía no se oye a sí mismo (ni pasos ni respiración), no hay capa de tensión ligada a la percepción del monstruo, y toda la síntesis está pendiente de sustituirse por foley grabado — las fábricas de voz del motor están hechas justamente para ese cambio.
 
 En móvil no hay un tercer perfil para gama baja: si un teléfono no llega, la resolución adaptativa baja hasta 0.6 y ahí se queda (apagar sombras sería el siguiente escalón, ya cableado en `QUALITY.touch.shadows`). Tampoco se han medido teléfonos reales — los perfiles están razonados sobre lo que cuesta cada cosa, no calibrados con un dispositivo en mano.
 
@@ -144,6 +167,6 @@ El ciclo de marcha del monstruo es único: no hay transiciones entre animaciones
 ## Estado del roadmap
 
 - [x] **Fase 1** — Movimiento · Linterna · Laberinto procedural · IA básica · Salida
-- [ ] **Fase 2** — Sonido espacial · Baterías · Eventos ambientales · Mejor IA (estado de Sospecha con evidencia sonora)
+- [ ] **Fase 2** — Sonido espacial ✅ · Baterías · Eventos ambientales · Mejor IA (estado de Sospecha con evidencia sonora)
 - [ ] **Fase 3** — Laberinto dinámico · Linterna consciente · Variantes del monstruo (Tipos A/B/C)
 - [ ] **Fase 4** — Optimización · Demo (móvil en horizontal ya soportado)
