@@ -425,6 +425,7 @@ export function buildMazeScene(scene, maze, CFG, rand, quality) {
   }
 
   // --- vidrios rotos: cúmulos de esquirlas que brillan bajo la linterna ---
+  const glassList = [];
   if (P.clutter.glassClusters) {
     const shardGeo = new THREE.CircleGeometry(0.05, 3); // triángulo
     const glassMat = new THREE.MeshStandardMaterial({
@@ -440,6 +441,8 @@ export function buildMazeScene(scene, maze, CFG, rand, quality) {
       const [wx, wz] = tileToWorld(x, y);
       const cx = wx + (rand() - 0.5) * 1.6;
       const cz = wz + (rand() - 0.5) * 1.6;
+      // se registra para que pisarlo suene a vidrio (ver soundscape)
+      glassList.push({ x: cx, z: cz, r: 0.85 });
       for (let j = 0; j < perCluster; j++) {
         dummy.position.set(cx + (rand() - 0.5) * 0.7, 0.011, cz + (rand() - 0.5) * 0.7);
         dummy.rotation.set(-Math.PI / 2, 0, rand() * Math.PI * 2);
@@ -568,5 +571,6 @@ export function buildMazeScene(scene, maze, CFG, rand, quality) {
     exitTrigger: door.position.clone(),
     floors,
     puddles: puddleList,
+    glass: glassList,
   };
 }

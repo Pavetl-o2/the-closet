@@ -15,6 +15,12 @@
 
 const rnd = (a, b) => a + Math.random() * (b - a);
 
+// Fracción del presupuesto de voces que puede usar cada tipo de sonido. Lo
+// que da información sobre el monstruo entra siempre (1); tus propios pasos
+// y el ambiente ceden antes de saturar, para no tragarse nunca un paso que
+// venía detrás de ti.
+const B = { monstruo: 1, respiracion: 0.8, propio: 0.6, ambiente: 0.5 };
+
 export class Soundscape {
   constructor(engine, cfg) {
     this.engine = engine;
@@ -26,6 +32,14 @@ export class Soundscape {
     this.stingCd = 0;
     this.floors = null;
     this.drone = null;
+
+    // --- tu cuerpo ---
+    this.myBreathT = 2;
+    this.inhaling = true;
+    this.holdT = 0;        // segundos conteniendo la respiración
+    this.holding = false;
+    this.gasping = 0;      // tras soltarla, jadeas un rato
+    this.lastSurface = 'concreto';
   }
 
   init() {
@@ -33,15 +47,36 @@ export class Soundscape {
     // Presencia: dos senos graves desafinados que baten entre sí. Nace en el
     // monstruo, no en la mezcla, para que tenga dirección.
     this.drone = this.engine.emitter({ freqs: [41, 47.3], vol: 0 });
+    // La linterna zumba mientras está encendida. Es el sonido de ser
+    // localizable: mientras lo oyes, algo puede verte.
+    this.lampHum = this.engine.hum({
+      freqs: [119, 238], noiseLevel: 0.02, filterHz: 5200, vol: 0,
+    });
   }
 
   resume() { this.engine.resume(); }
   silence() { this.engine.silence(); }
 
-  setWorld(mazeInfo, floors) {
+  setWorld(mazeInfo, { floors, puddles = [], glass = [] }) {
     this.engine.setWorld(mazeInfo);
     this.maze = mazeInfo;
     this.floors = floors;
+    this.puddles = puddles;
+    this.glass = glass;
+  }
+
+  // Qué hay bajo tus pies. Los charcos y los vidrios ya están colocados en el
+  // mundo; aquí solo se pregunta cuál pisas.
+  surfaceAt(x, z) {
+    for (const p of this.puddles) {
+      const dx = x - p.x, dz = z - p.z;
+      if (dx * dx + dz * dz < p.r * p.r) return 'agua';
+    }
+    for (const g of this.glass) {
+      const dx = x - g.x, dz = z - g.z;
+      if (dx * dx + dz * dz < g.r * g.r) return 'vidrio';
+    }
+    return 'concreto';
   }
 
   // --- sonidos puntuales ------------------------------------------------
@@ -64,18 +99,57 @@ export class Soundscape {
     o.stop(t + 0.06);
   }
 
-  // Pisar un charco. Suena donde estás tú, así que el eco vuelve del pasillo
-  // — y es exactamente el ruido que te delata (ver Monster.hearNoise).
-  splash(running, pos) {
+  // Tu propio paso. Va pegado a ti (el sonido directo nace en tus pies) pero
+  // con envío generoso a la reverb, que es de donde vuelve el eco: así es
+  // como se oye caminar en un pasillo vacío de verdad.
+  //
+  // Deja en `stepNoise` cuánto te ha delatado ese paso, para que el juego
+  // decida si algo lo ha oído. Chapotear y pisar vidrios suena — y cuesta.
+  playerStep(surface, running) {
     const e = this.engine;
-    if (!e.ctx || e.dead || !pos) return;
-    const v = running ? 1 : 0.62;
-    e.noiseAt(pos.x, 0.1, pos.z, {
-      freq: rnd(1800, 2400), q: 0.8, vol: 0.3 * v, decay: rnd(0.22, 0.3), reverbSend: 1.4,
-    });
-    e.noiseAt(pos.x, 0.1, pos.z, {
-      freq: 500, q: 1.2, vol: 0.16 * v, decay: 0.14, reverbSend: 1.4,
-    });
+    if (!e.ctx || e.dead) return;
+    const v = this.cfg.stepVolume * (running ? 2 : 1);
+
+    if (surface === 'agua') {
+      e.noiseFlat({ freq: rnd(1700, 2500), q: 0.7, vol: v * 1.9, decay: rnd(0.2, 0.3), reverbSend: 1.5, budget: B.propio });
+      e.noiseFlat({ freq: rnd(420, 620), q: 1.1, vol: v * 1.1, decay: 0.16, reverbSend: 1.5, budget: B.propio });
+      this.stepNoise = 1;
+    } else if (surface === 'vidrio') {
+      // Crujido: varias esquirlas partiéndose, nunca dos iguales
+      for (let i = 0; i < 3; i++) {
+        e.noiseFlat({
+          freq: rnd(3200, 6500), q: 7, vol: v * rnd(0.5, 1.1),
+          attack: 0.002, decay: rnd(0.03, 0.09), reverbSend: 1.2, budget: B.propio,
+        });
+      }
+      e.toneFlat({ f0: 90, f1: 55, vol: v * 0.7, dur: 0.14, reverbSend: 0.9, budget: B.propio });
+      this.stepNoise = 0.9;
+    } else {
+      // Concreto: el peso del cuerpo más el chasquido seco de la suela
+      e.toneFlat({ f0: 78, f1: 44, vol: v, dur: 0.16, reverbSend: 0.9, budget: B.propio });
+      e.noiseFlat({
+        freq: rnd(1900, 2900), q: 1.4, vol: v * 0.5,
+        attack: 0.002, decay: 0.05, reverbSend: 1.1, budget: B.propio,
+      });
+      this.stepNoise = running ? 0.35 : 0;
+    }
+  }
+
+  // Tu respiración. Alterna inhalar y exhalar; el ritmo lo marcan el esfuerzo
+  // y el miedo.
+  playerBreath(volume, exhale) {
+    const e = this.engine;
+    if (exhale) {
+      e.noiseFlat({ freq: 380, q: 1.5, vol: volume, attack: 0.05, decay: 0.38, reverbSend: 0.5, budget: B.respiracion });
+    } else {
+      e.noiseFlat({ freq: 720, q: 1.9, vol: volume * 0.85, attack: 0.16, decay: 0.24, reverbSend: 0.4, budget: B.respiracion });
+    }
+  }
+
+  // Soltar el aire de golpe tras haberlo contenido
+  gasp() {
+    this.engine.noiseFlat({ freq: 520, q: 1.1, vol: 0.3, attack: 0.01, decay: 0.55, reverbSend: 0.8 });
+    this.engine.noiseFlat({ freq: 1500, q: 0.8, vol: 0.09, attack: 0.01, decay: 0.3, reverbSend: 0.8 });
   }
 
   // Arranca una cacería: dos glissandos disonantes. Va sin situar, como la
@@ -137,7 +211,7 @@ export class Soundscape {
 
   // --- ciclo por frame ---------------------------------------------------
 
-  update(dt, monsters, player, camera) {
+  update(dt, { monsters, player, camera, flashlight }) {
     const e = this.engine;
     if (!e.ctx || e.dead) return;
 
@@ -145,6 +219,7 @@ export class Soundscape {
     // este frame se miden desde aquí.
     e.setListener(camera);
     this.stingCd = Math.max(0, this.stingCd - dt);
+    this.stepNoise = 0;
 
     let nearest = null;
     let nearestD = Infinity;
@@ -193,6 +268,66 @@ export class Soundscape {
       }
     }
 
+    // ---------------- tu cuerpo ----------------
+    // El jugador ya no es mudo. Sus pasos suenan sincronizados con el vaivén
+    // de cámara (misma fase de zancada) y cambian según lo que pisa.
+    if (player.stepped) {
+      this.lastSurface = this.surfaceAt(player.position.x, player.position.z);
+      this.playerStep(this.lastSurface, player.isRunning);
+    }
+
+    // Respiración: se acelera con el esfuerzo y con lo cerca que esté algo.
+    // Y si te quedas quieto con una de esas cosas encima, la contienes —
+    // el silencio propio es lo que más tensa.
+    // El miedo no crece linealmente con la cercanía: se dispara cuando algo
+    // ya está encima. La curva hace que los últimos metros pesen mucho más.
+    const fear = nearest
+      ? Math.pow(Math.max(0, 1 - nearestD / this.cfg.breathFearDistance), 0.6)
+      : 0;
+    const wantsHold = nearest && nearestD < this.cfg.holdBreathDistance && !player.moving;
+
+    if (wantsHold && this.holdT < this.cfg.holdBreathMax) {
+      this.holding = true;
+      this.holdT += dt;
+    } else if (this.holding) {
+      // Se acabó: o se ha alejado, o ya no aguantas más
+      this.holding = false;
+      this.holdT = 0;
+      this.gasping = 3.5;
+      this.gasp();
+      this.myBreathT = 0.5;
+    } else {
+      this.holdT = Math.max(0, this.holdT - dt * 0.5);
+    }
+
+    if (!this.holding) {
+      this.gasping = Math.max(0, this.gasping - dt);
+      this.myBreathT -= dt;
+      if (this.myBreathT <= 0) {
+        const c = this.cfg;
+        let interval = player.isRunning ? c.breathRun
+          : player.moving ? c.breathWalk : c.breathRest;
+        interval *= 1 - 0.65 * fear;                 // el miedo acelera
+        if (this.gasping > 0) interval = Math.min(interval, 0.75);
+        this.myBreathT = interval * rnd(0.85, 1.15);
+
+        const vol = 0.045
+          + (player.isRunning ? 0.075 : 0)
+          + fear * 0.07
+          + (this.gasping > 0 ? 0.06 : 0);
+        this.inhaling = !this.inhaling;
+        this.playerBreath(vol, !this.inhaling);
+      }
+    }
+
+    // La linterna zumba mientras está encendida, y el zumbido se desafina
+    // conforme se agota la pila: el estado de la batería se oye sin mirar
+    // el HUD, y ese zumbido es literalmente el sonido de ser localizable.
+    if (this.lampHum && flashlight) {
+      this.lampHum.setVolume(flashlight.lightLevel * this.cfg.flashlightHum);
+      this.lampHum.setDetune(-190 * (1 - flashlight.battery));
+    }
+
     // Ambiente: goteras y crujidos desde casillas reales del laberinto. Al
     // tener posición, se ocluyen igual que todo lo demás: un goteo detrás de
     // un muro suena sordo y lejano, y eso es información, no decorado.
@@ -204,11 +339,11 @@ export class Soundscape {
         if (spot) {
           if (Math.random() < 0.55) {
             e.noiseAt(spot[0], 2.4, spot[1], {
-              freq: rnd(2600, 4100), q: 8, vol: 0.14, decay: 0.09, reverbSend: 1.6,
+              freq: rnd(2600, 4100), q: 8, vol: 0.14, decay: 0.09, reverbSend: 1.6, budget: B.ambiente,
             });
           } else {
             e.toneAt(spot[0], 1.0, spot[1], {
-              f0: rnd(48, 70), f1: 30, vol: 0.22, dur: 0.35, reverbSend: 1.6,
+              f0: rnd(48, 70), f1: 30, vol: 0.22, dur: 0.35, reverbSend: 1.6, budget: B.ambiente,
             });
           }
         }

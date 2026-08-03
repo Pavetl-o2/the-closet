@@ -79,7 +79,7 @@ applyAspect();
 const flashlight = new Flashlight(scene, CONFIG.FLASHLIGHT, profile);
 
 const audio = new Soundscape(new AudioEngine(CONFIG.AUDIO, profile), CONFIG.AUDIO);
-audio.setWorld(M, built.floors);
+audio.setWorld(M, built);
 const hud = new HUD();
 hud.setText('seed-label', `semilla ${seed}`);
 
@@ -345,24 +345,17 @@ function loop() {
     flashlight.update(dt, camera);
     for (const mon of monsters) mon.update(dt, player.position, flashlight);
     updateLamps(built.lamps, built.lampPool, elapsed, player.position);
-    audio.update(dt, monsters, player, camera);
+    audio.update(dt, { monsters, player, camera, flashlight });
     hud.setBattery(flashlight.battery, flashlight.lightLevel);
 
-    // Pisar un charco delata tu posición: los monstruos que lo oyen
-    // rastrean tu ubicación unos segundos (ver Monster.hearNoise)
+    // Lo que suena y lo que te delata son ahora la misma cosa: el sistema de
+    // pasos decide cuánto ruido has hecho según lo que pisas (chapotear y
+    // partir vidrios cuestan), y los monstruos que estén a rango lo oyen.
     splashCd -= dt;
-    if (player.moving && splashCd <= 0) {
-      for (const p of built.puddles) {
-        const dx = player.position.x - p.x;
-        const dz = player.position.z - p.z;
-        if (dx * dx + dz * dz < p.r * p.r) {
-          splashCd = CONFIG.PROPS.puddles.splashCooldown;
-          audio.splash(player.isRunning, player.position);
-          for (const mon of monsters) {
-            if (mon.distanceToPlayer < CONFIG.MONSTER.hearingRange) mon.hearNoise();
-          }
-          break;
-        }
+    if (audio.stepNoise > 0.5 && splashCd <= 0) {
+      splashCd = CONFIG.PROPS.puddles.splashCooldown;
+      for (const mon of monsters) {
+        if (mon.distanceToPlayer < CONFIG.MONSTER.hearingRange) mon.hearNoise();
       }
     }
 

@@ -78,7 +78,11 @@ export const CONFIG = {
     touchStickRadius: 66,  // px hasta el tope del joystick virtual
     touchRunAt: 0.88,      // fracción del recorrido a partir de la cual corre
     bobAmp: 0.035,         // vaivén de cámara al caminar
-    bobFreq: 6.0,
+    // Metros por paso. Fija a la vez la cadencia del vaivén de cámara y la de
+    // los pasos que se oyen, porque salen de la misma fase. 1.05 reproduce el
+    // ritmo de vaivén que tenía el juego antes de que los pasos sonaran.
+    strideWalk: 1.05,
+    strideRun: 1.5,
     runFovKick: 5,         // grados extra de FOV al correr
   },
 
@@ -143,8 +147,18 @@ export const CONFIG = {
     rolloff: 1.15,        // cuán rápido cae con la distancia (modelo inverso)
     reverbLevel: 0.5,     // cuánto pasillo se oye rebotar
     droneMaxDistance: 14, // presencia: zumbido grave cuando un monstruo se acerca
-    breathDistance: 6,    // respiración audible a menos de esta distancia
+    breathDistance: 6,    // respiración del monstruo audible a esta distancia
     ambient: true,        // goteras y crujidos desde casillas reales
+
+    // --- tu propio cuerpo ---
+    stepVolume: 0.16,     // tus pasos; correr multiplica
+    breathRest: 4.6,      // segundos entre respiraciones, quieto y a salvo
+    breathWalk: 3.2,
+    breathRun: 1.15,      // corriendo jadeas
+    breathFearDistance: 9, // a partir de aquí el miedo te acelera la respiración
+    holdBreathDistance: 3.6, // si algo está más cerca y no te mueves, la contienes
+    holdBreathMax: 7,     // segundos que aguantas antes de soltarla de golpe
+    flashlightHum: 0.05,  // zumbido de la linterna encendida
   },
 
   PROPS: {

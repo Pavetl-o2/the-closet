@@ -30,7 +30,13 @@ export class Player {
 
     this.vel = new THREE.Vector3();
     this.keys = Object.create(null);
-    this.bobAcc = 0;
+    // Fase de zancada en unidades de "pasos": avanza con la distancia
+    // recorrida, no con el reloj. De ella salen tanto el vaivén de cámara
+    // como los pasos que se oyen, así que van sincronizados por
+    // construcción — el golpe suena justo cuando el cuerpo baja.
+    this.stridePhase = 0;
+    this.stepped = false;   // true el frame exacto en que un pie toca
+    this.stepIndex = 0;     // alterna pie izquierdo / derecho
     this.bobCur = 0;
     this.moving = false;
     this.isRunning = false;
@@ -100,17 +106,30 @@ export class Player {
     this.rig.position.x = px;
     this.rig.position.z = pz;
 
-    // Head-bob suave (se desvanece al detenerse)
+    // Zancada: la fase avanza con los metros recorridos, así que la cadencia
+    // sale sola de la velocidad y no hay que sincronizar nada a mano.
     const spd = Math.hypot(this.vel.x, this.vel.z);
     this.moving = spd > 0.4;
-    if (this.moving) this.bobAcc += spd * dt;
-    const targetAmp = this.moving ? c.bobAmp * (wantsRun ? 1.5 : 1) : 0;
-    this.bobCur += (targetAmp - this.bobCur) * (1 - Math.exp(-8 * dt));
-    this.camera.position.y = Math.sin(this.bobAcc * c.bobFreq) * this.bobCur;
-    this.camera.position.x = Math.cos(this.bobAcc * c.bobFreq * 0.5) * this.bobCur * 0.6;
-
-    // Empuje de FOV al correr
     this.isRunning = wantsRun && this.moving;
+
+    this.stepped = false;
+    if (this.moving) {
+      const stride = this.isRunning ? c.strideRun : c.strideWalk;
+      const prev = this.stridePhase;
+      this.stridePhase += (spd * dt) / stride;
+      if (Math.floor(this.stridePhase) !== Math.floor(prev)) {
+        this.stepped = true;
+        this.stepIndex++;
+      }
+    }
+
+    // Vaivén de cámara derivado de la misma fase: la cabeza está en su punto
+    // más bajo justo en el apoyo (fase entera), que es cuando suena el paso.
+    const targetAmp = this.moving ? c.bobAmp * (this.isRunning ? 1.5 : 1) : 0;
+    this.bobCur += (targetAmp - this.bobCur) * (1 - Math.exp(-8 * dt));
+    const p = this.stridePhase;
+    this.camera.position.y = -Math.cos(p * Math.PI * 2) * this.bobCur;
+    this.camera.position.x = Math.sin(p * Math.PI) * this.bobCur * 0.6;
     const targetFov = this.baseFov + (this.isRunning ? c.runFovKick : 0);
     if (Math.abs(this.camera.fov - targetFov) > 0.05) {
       this.camera.fov += (targetFov - this.camera.fov) * (1 - Math.exp(-6 * dt));

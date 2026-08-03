@@ -215,8 +215,14 @@ export class AudioEngine {
     return { input: filter, panner };
   }
 
-  canPlay() {
-    return this.ctx && !this.dead && this.voices < this.q.audioVoices;
+  // Presupuesto de voces por prioridad. Los sonidos que dan INFORMACIÓN (los
+  // pasos del monstruo, su respiración) pueden usar todo el presupuesto; los
+  // tuyos y el ambiente se cortan antes, dejando hueco reservado.
+  //
+  // Sin esto, correr sobre vidrios podía saturar el grafo en móvil y tragarse
+  // el paso del monstruo que venía detrás — justo lo que el GDD prohíbe.
+  canPlay(budget = 1) {
+    return this.ctx && !this.dead && this.voices < this.q.audioVoices * budget;
   }
 
   // Contabilidad de voces: evita que una ráfaga de eventos sature el grafo
@@ -233,8 +239,8 @@ export class AudioEngine {
   // Aquí es donde luego entran los samples: misma firma, otra fuente.
 
   // Golpe/roce de ruido filtrado, situado en el mundo
-  noiseAt(x, y, z, { freq, q = 1, vol, attack = 0.005, decay = 0.2, reverbSend = 1 }) {
-    if (!this.canPlay()) return;
+  noiseAt(x, y, z, { freq, q = 1, vol, attack = 0.005, decay = 0.2, reverbSend = 1, budget = 1 }) {
+    if (!this.canPlay(budget)) return;
     const ctx = this.ctx;
     const t = this.time;
     const src = ctx.createBufferSource();
@@ -259,8 +265,8 @@ export class AudioEngine {
   }
 
   // Tono con caída de frecuencia, situado en el mundo
-  toneAt(x, y, z, { type = 'sine', f0, f1, vol, dur = 0.3, reverbSend = 1 }) {
-    if (!this.canPlay()) return;
+  toneAt(x, y, z, { type = 'sine', f0, f1, vol, dur = 0.3, reverbSend = 1, budget = 1 }) {
+    if (!this.canPlay(budget)) return;
     const ctx = this.ctx;
     const t = this.time;
     const o = ctx.createOscillator();
@@ -279,8 +285,10 @@ export class AudioEngine {
     this.track(o, dur);
   }
 
-  // Sonido "en la cabeza": el clic de la linterna, los golpes de tensión.
-  // No se sitúa en el mundo, pero sí pasa por la reverb del pasillo.
+  // Sonido "en la cabeza": el clic de la linterna, tus propios pasos, tu
+  // respiración. No se sitúa en el mundo — está pegado a ti — pero sí pasa
+  // por la reverb, que es justo como se oye en la realidad: el sonido
+  // directo en tus pies y el eco devuelto por el pasillo.
   flat({ node, gain, dur, reverbSend = 0.35 }) {
     gain.connect(this.dry);
     if (this.wet && reverbSend > 0) {
@@ -289,6 +297,103 @@ export class AudioEngine {
       gain.connect(send).connect(this.wet);
     }
     if (node) this.track(node, dur);
+  }
+
+  // Ruido filtrado pegado a ti
+  noiseFlat({ freq, q = 1, vol, attack = 0.004, decay = 0.15, reverbSend = 0.8, budget = 1 }) {
+    if (!this.canPlay(budget)) return;
+    const ctx = this.ctx;
+    const t = this.time;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noiseBuf;
+    src.loop = true;
+    src.playbackRate.value = 0.85 + Math.random() * 0.3; // nunca dos idénticos
+
+    const band = ctx.createBiquadFilter();
+    band.type = 'bandpass';
+    band.frequency.value = freq;
+    band.Q.value = q;
+
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(Math.max(0.0002, vol), t + attack);
+    g.gain.exponentialRampToValueAtTime(0.0005, t + attack + decay);
+
+    src.connect(band).connect(g);
+    this.flat({ node: src, gain: g, dur: attack + decay, reverbSend });
+    src.start(t);
+    src.stop(t + attack + decay + 0.05);
+  }
+
+  // Tono pegado a ti
+  toneFlat({ type = 'sine', f0, f1, vol, dur = 0.2, reverbSend = 0.8, budget = 1 }) {
+    if (!this.canPlay(budget)) return;
+    const ctx = this.ctx;
+    const t = this.time;
+    const o = ctx.createOscillator();
+    o.type = type;
+    o.frequency.setValueAtTime(f0, t);
+    if (f1 && f1 !== f0) o.frequency.exponentialRampToValueAtTime(f1, t + dur * 0.8);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(Math.max(0.0002, vol), t);
+    g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
+    o.connect(g);
+    this.flat({ node: o, gain: g, dur, reverbSend });
+    o.start(t);
+    o.stop(t + dur + 0.05);
+  }
+
+  // Fuente continua pegada a ti (el zumbido de la linterna). No se sitúa:
+  // la llevas en la mano, va contigo vayas donde vayas.
+  hum({ freqs, noiseLevel = 0, filterHz = 3000, vol = 0 }) {
+    if (!this.ctx) return null;
+    const ctx = this.ctx;
+    const gain = ctx.createGain();
+    gain.gain.value = vol;
+    gain.connect(this.dry);
+    if (this.wet) {
+      const send = ctx.createGain();
+      send.gain.value = 0.25;
+      gain.connect(send).connect(this.wet);
+    }
+
+    const oscs = freqs.map((f, i) => {
+      const o = ctx.createOscillator();
+      o.type = i === 0 ? 'sawtooth' : 'sine';
+      o.frequency.value = f;
+      const og = ctx.createGain();
+      og.gain.value = i === 0 ? 0.35 : 0.65;
+      o.connect(og).connect(gain);
+      o.start();
+      return o;
+    });
+
+    // Siseo del filamento
+    let noiseGain = null;
+    if (noiseLevel > 0) {
+      const src = ctx.createBufferSource();
+      src.buffer = this.noiseBuf;
+      src.loop = true;
+      const hp = ctx.createBiquadFilter();
+      hp.type = 'bandpass';
+      hp.frequency.value = filterHz;
+      hp.Q.value = 0.8;
+      noiseGain = ctx.createGain();
+      noiseGain.gain.value = noiseLevel;
+      src.connect(hp).connect(noiseGain).connect(gain);
+      src.start();
+    }
+
+    const self = this;
+    return {
+      gain, oscs, noiseGain,
+      setVolume(v, smoothing = 0.08) {
+        gain.gain.setTargetAtTime(Math.max(0, v), self.time, smoothing);
+      },
+      setDetune(cents) {
+        for (const o of oscs) o.detune.setTargetAtTime(cents, self.time, 0.05);
+      },
+    };
   }
 
   // Fuente continua que sigue a algo por el mundo (el zumbido de presencia).

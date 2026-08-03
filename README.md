@@ -70,7 +70,7 @@ Cada partida es un laberinto distinto. La semilla aparece en la pantalla de inic
 | `src/maze/builder.js` | Geometría: muros instanciados, piso/techo, tuberías, cables, charcos, cajas, tarimas, barriles, libros, ropa, vidrios, manchas, focos colgantes, puerta de salida. |
 | `src/world/textures.js` | Texturas procedurales en canvas (ladrillo, concreto, plafón, óxido, madera, charco, manchas). Sin assets externos. |
 | `src/world/atmosphere.js` | Niebla, luz ambiental base, parpadeo de los focos colgantes. |
-| `src/player/player.js` | FPS: pointer lock, colisión circular contra la grilla, head-bob, FOV al correr. |
+| `src/player/player.js` | FPS: pointer lock, colisión circular contra la grilla, fase de zancada (vaivén + pasos), FOV al correr. |
 | `src/flashlight/flashlight.js` | Spotlight amplio con sway de mano + luz de rebote, estados de batería del GDD, parpadeo al 10%. |
 | `src/monster/monster.js` | Tipo A: percepción por luz + oído + FSM (IDLE → INVESTIGATE → HUNT → SEARCH). Velocidad de cacería según tu linterna. |
 | `src/monster/model.js` | Carga del GLB, reparación del rig y repesado de la piel. |
@@ -95,6 +95,8 @@ Las perillas que más cambian la experiencia:
 7. `MONSTER.patrolBiasNearPlayer` — frecuencia de encuentros (0 = patrulla 100% aleatoria).
 8. `MONSTER.awarenessInvestigate/awarenessHunt` — cuánta luz "aguanta" antes de reaccionar.
 9. `AUDIO.reverbLevel`, `AUDIO.rolloff` y `AUDIO.refDistance` — cuánto pasillo se oye rebotar y a qué ritmo cae el sonido con la distancia.
+10. `PLAYER.strideWalk/strideRun` — cadencia de tus pasos y del vaivén de cámara (van juntos).
+11. `AUDIO.holdBreathDistance/holdBreathMax` — cuándo contienes la respiración y cuánto aguantas.
 
 `?debug` en la URL expone `window.__game` en consola para inspección.
 
@@ -150,6 +152,18 @@ La fila del paneo plano es la que importa: con el sistema anterior, delante y de
 
 El motor no decide qué suena: solo cómo llega al oído. Las fuentes se crean con fábricas de voz (`noiseAt`, `toneAt`, `emitter`), que es el punto donde entrarán los samples grabados sin tocar el grafo.
 
+**Ahora te oyes a ti mismo (Fase 2, paso 2).** Antes el jugador era mudo: solo sonaba el monstruo. Eso dejaba coja la propia mecánica del juego — pisar un charco te delataba, pero tú no te oías hacer ruido.
+
+*Los pasos salen de la misma fase que el vaivén de cámara.* En vez de un temporizador aparte, `Player` lleva una fase de zancada que avanza con los metros recorridos, y de ella se derivan a la vez el bamboleo visual y el golpe audible. Medido: en el frame exacto del paso, el vaivén está al **−0.985 de su recorrido** (−1 sería el punto más bajo). El sonido cae justo cuando el cuerpo se desploma sobre el pie, sin sincronizar nada a mano. Cadencia resultante: 2.83 pasos/s caminando y 3.5 corriendo. La zancada de 1.05 m se eligió para reproducir el ritmo de vaivén que el juego ya tenía.
+
+*Lo que pisas se oye, y cuesta.* Concreto (peso grave + chasquido de suela), agua (chapoteo con eco de pasillo) y vidrio (tres esquirlas partiéndose, nunca iguales). Cada paso deja en `stepNoise` cuánto te ha delatado — 0 caminando en seco, 0.35 corriendo, 0.9 en vidrios, 1 en agua — y el juego decide con eso quién te ha oído. Lo que suena y lo que te delata pasaron a ser la misma cosa, en vez de dos sistemas separados.
+
+*Respiración con miedo, y contenerla.* El ritmo sube con el esfuerzo y con la cercanía de algo: 0.25 respiraciones/s en calma, 0.4 con un monstruo a 5 m, 0.9 corriendo. El miedo no crece lineal con la distancia, sino con una curva que hace pesar mucho más los últimos metros. Y si te quedas **quieto** con una de esas cosas a menos de 3.6 m, el personaje **contiene la respiración** hasta 7 segundos y luego la suelta de golpe. Tu propio silencio es lo que más tensa, y no hizo falta mecánica nueva para conseguirlo.
+
+*La linterna zumba.* Mientras está encendida suena un hum eléctrico proporcional a la intensidad, que se **desafina hacia abajo conforme se agota la pila** (0 cents llena, −175 al 8 %). El estado de la batería se oye sin mirar el HUD — y ese zumbido es, literalmente, el sonido de ser localizable.
+
+*Presupuesto de voces por prioridad.* Los sonidos que dan información sobre el monstruo pueden usar todo el presupuesto; tus pasos y el ambiente se cortan antes. Sin esto, correr sobre vidrios saturaba el grafo en móvil (pico de 12/12) y podía tragarse el paso del monstruo que venía detrás — justo lo que el GDD prohíbe. Con prioridades el pico baja a 10/12 y siempre queda hueco reservado.
+
 **Todo sigue sintetizado, sin assets.** Pasos de cada monstruo (con el roce del pie muerto alternando), un zumbido grave de presencia que ahora **sale del monstruo** en vez de la mezcla, así que se puede localizar; respiración a la altura de su cara cuando lo tienes encima; una estridencia inconfundible al arrancar una cacería; chapoteos al pisar charcos, que rebotan por el pasillo y son justo el ruido que te delata; y goteras y crujidos desde **casillas reales del laberinto**, no paneos al azar — así que también se ocluyen: un goteo detrás de un muro suena sordo, y eso es información, no decorado. Se apaga con `AUDIO.enabled = false`.
 
 **La muerte te lo muestra un instante.** Captura → tu mirada se gira hacia él, se echa encima con los brazos estirados y la cara volcada sobre la cámara, y un fogonazo tembloroso lo revela durante nueve décimas de segundo; después, corte a negro y silencio (GDD). Verlo de cerca solo al morir mantiene el resto del misterio intacto.
@@ -158,7 +172,7 @@ El motor no decide qué suena: solo cómo llega al oído. Las fuentes se crean c
 
 Los props (cajas, barriles, tarimas, tuberías…) son decorativos y no tienen colisión. No hay música. No hay pickups de batería (Fase 2).
 
-Del audio queda por hacer: el jugador todavía no se oye a sí mismo (ni pasos ni respiración), no hay capa de tensión ligada a la percepción del monstruo, y toda la síntesis está pendiente de sustituirse por foley grabado — las fábricas de voz del motor están hechas justamente para ese cambio.
+Del audio queda por hacer: no hay capa de tensión ligada a la percepción del monstruo (`awareness`), ni música, y toda la síntesis está pendiente de sustituirse por foley grabado — las fábricas de voz del motor están hechas justamente para ese cambio. Correr sobre concreto genera ruido (0.35) pero no llega al umbral que delata (0.5): la perilla está puesta por si se quiere que correr también te cueste.
 
 En móvil no hay un tercer perfil para gama baja: si un teléfono no llega, la resolución adaptativa baja hasta 0.6 y ahí se queda (apagar sombras sería el siguiente escalón, ya cableado en `QUALITY.touch.shadows`). Tampoco se han medido teléfonos reales — los perfiles están razonados sobre lo que cuesta cada cosa, no calibrados con un dispositivo en mano.
 
