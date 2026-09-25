@@ -75,7 +75,8 @@ Cada partida es un laberinto distinto. La semilla aparece en la pantalla de inic
 | `src/world/ripples.js` | Ondas en los charcos, sincronizadas con cada gota que suena. |
 | `src/render/psx.js` | Estética PS1: resolución de 240 líneas con escala entera, color de 15 bits con dithering, grano, vértices anclados a la rejilla y la reacción de la imagen al peligro. |
 | `src/player/player.js` | FPS: pointer lock, colisión circular contra la grilla, fase de zancada (vaivén + pasos), FOV al correr. |
-| `src/flashlight/flashlight.js` | Spotlight amplio con sway de mano + luz de rebote, estados de batería del GDD, parpadeo al 10%. |
+| `src/flashlight/flashlight.js` | Spotlight amplio con sway de mano + luz de rebote, estados de batería del GDD, parpadeo al 10%. Decide la pose de la linterna en tu mano y pone el foco en su lente. |
+| `src/flashlight/model.js` | La linterna roja que se ve en primera persona, dibujada en una pasada propia encima de la escena. |
 | `src/monster/monster.js` | Tipo A: percepción por luz + oído + FSM (IDLE → INVESTIGATE → HUNT → SEARCH). Velocidad de cacería según tu linterna. |
 | `src/monster/model.js` | Carga del GLB, reparación del rig y repesado de la piel. |
 | `src/monster/animation.js` | Ciclo de marcha de zombi: cojera, pie arrastrado y piernas por cinemática inversa. |
@@ -104,6 +105,7 @@ Las perillas que más cambian la experiencia:
 11. `AUDIO.holdBreathDistance/holdBreathMax` — cuándo contienes la respiración y cuánto aguantas.
 12. `RENDER.psx` — la estética PS1: líneas de resolución, bits de color, grano, desaturación, rejilla de vértices.
 13. `MONSTER.darkDropSeconds` y `MONSTER.darkSenseStill/Move/Run` — cuánto tarda en perderte al apagar la luz y a qué distancia te sigue sintiendo según lo que haga tu cuerpo.
+14. `FLASHLIGHT.hold` y `FLASHLIGHT.aimDistance` — dónde llevas la linterna en el campo de visión y a qué distancia converge su haz con tu mirada.
 
 `?debug` en la URL expone `window.__game` en consola para inspección.
 
@@ -122,6 +124,12 @@ Las perillas que más cambian la experiencia:
 - Encima, grano de película, desaturación casi monocroma y viñeta.
 
 A propósito **no** se reproduce el mapeo afín de texturas: la PS1 lo disimulaba subdividiendo la geometría y aquí deformaría pasillos enteros. Suelo y techo sí se subdividen por casilla, como en la consola, porque con el anclaje de vértices un plano de dos triángulos gigantes inclinaba su profundidad y se tragaba los charcos.
+
+**La linterna se ve en tu mano, y el haz sale de ella.** Una linterna de plástico rojo, sencilla, low-poly como todo lo demás: cuerpo con estrías de agarre, interruptor de goma negra, cabeza ensanchada con aro metálico. Va abajo a la derecha del campo de visión y apunta al punto que miras, con el mismo retraso de mano que ya tenía el haz: al girar rápido se queda atrás un instante. Al andar, el vaivén le llega amortiguado; al pulsar el interruptor, da un respingo.
+
+Lo importante es que **la pose de la linterna es la que define la luz**: el foco nace en su lente y sale por su eje, así que el disco que ves en el suelo o en el muro está siempre donde apunta la linterna que llevas. Pegado a un muro, la lente sobresale de tu radio de colisión; el foco se retrasa lo justo para no quedar dentro de la pared (si no, iluminaría el pasillo de al lado), y el resplandor de rebote se apaga en vez de quemar la pared entera: lo que ves es el disco del haz y la linterna a contraluz.
+
+Se dibuja en una pasada aparte, encima de la escena y con la profundidad borrada, para que nunca atraviese un muro. Como esa pasada no ve las luces del mundo, lleva las suyas copiadas cada frame: la luz base (a la mitad: tu cuerpo le hace sombra), lo que su propio haz devuelve y el foco colgante más cercano. Pasa por el mismo filtro PS1 que el resto, así que también tiembla y se tramea. La lente y el aro brillan con lo que emite la linterna, parpadeos de pila baja incluidos.
 
 **La luz base nunca es negro.** Con la linterna apagada se leen los muros y las siluetas a unos metros, como en la referencia. El número de `ambientIntensity` (30) parece enorme porque la luz hemisférica de three.js se divide entre π y el cemento apenas refleja: con el valor anterior la vista sin linterna medía 2 sobre 255 — negro puro.
 

@@ -18,7 +18,8 @@ import { Soundscape } from './audio/soundscape.js';
 import { HUD } from './ui/hud.js';
 import { detectDevice, AdaptiveResolution } from './core/device.js';
 import { TouchControls } from './input/touch.js';
-import { installVertexSnap, PSXPipeline } from './render/psx.js';
+import { installVertexSnap, PSXPipeline, renderOverlay } from './render/psx.js';
+import { FlashlightModel } from './flashlight/model.js';
 import { Ripples } from './world/ripples.js';
 
 const seed = getSeedFromURL();
@@ -89,6 +90,9 @@ scene.add(player.rig);
 applyAspect();
 
 const flashlight = new Flashlight(scene, CONFIG.FLASHLIGHT, profile);
+flashlight.setMaze(M);
+// La linterna roja en tu mano: se dibuja encima de la escena (ver model.js)
+const heldLight = new FlashlightModel(CONFIG.RENDER);
 
 const audio = new Soundscape(new AudioEngine(CONFIG.AUDIO, profile), CONFIG.AUDIO);
 audio.setWorld(M, built);
@@ -147,6 +151,10 @@ scene.add(revealLight);
 // Primer reparto de luces, para que el mundo ya esté iluminado en el frame
 // inicial (el pool arranca a intensidad 0).
 updateLamps(built.lamps, built.lampPool, 0, player.position);
+// La linterna ya en la mano desde la pantalla de inicio, apuntando al frente
+camera.getWorldDirection(flashlight.smoothDir);
+flashlight.update(0, camera);
+heldLight.update(flashlight, built.lampPool);
 
 // ---------- estados de partida ----------
 let state = 'start'; // start | playing | caught | paused | dead | win
@@ -376,6 +384,7 @@ function loop() {
 
     player.update(dt);
     flashlight.update(dt, camera);
+    heldLight.update(flashlight, built.lampPool);
     for (const mon of monsters) mon.update(dt, player.position, flashlight, player);
     updateLamps(built.lamps, built.lampPool, elapsed, player.position);
     audio.update(dt, { monsters, player, camera, flashlight });
@@ -425,6 +434,7 @@ function loop() {
 
     killer.approachForKill(player.position, dt);
     flashlight.update(dt, camera);
+    heldLight.update(flashlight, built.lampPool);
     if (psx) {
       psx.uniforms.uDanger.value = 1;
       psx.uniforms.uPulse.value = Math.random();
@@ -443,8 +453,12 @@ function loop() {
   }
 
   clockTotal += dt;
-  if (psx) psx.render(scene, camera, clockTotal);
-  else renderer.render(scene, camera);
+  if (psx) {
+    psx.render(scene, camera, clockTotal, heldLight.scene);
+  } else {
+    renderer.render(scene, camera);
+    renderOverlay(renderer, heldLight.scene, camera);
+  }
 }
 
 loop();
@@ -453,7 +467,7 @@ loop();
 if (new URLSearchParams(location.search).has('debug')) {
   window.__game = {
     scene, camera, renderer, player, flashlight, monsters, built, maze,
-    CONFIG, profile, adaptive, isTouch, audio, psx, ripples,
+    CONFIG, profile, adaptive, isTouch, audio, psx, ripples, heldLight,
   };
   import('./audio/voice.js').then((m) => { window.__voice = m; });
 }

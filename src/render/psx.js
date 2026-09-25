@@ -195,12 +195,24 @@ export class PSXPipeline {
     this.scale = scale;
   }
 
-  render(scene, camera, time) {
+  // `overlay`: escena que se dibuja encima con la profundidad borrada (la
+  // linterna en la mano), antes de la pasada PS1 para que reciba el mismo
+  // tratamiento de color, grano y dithering que el mundo.
+  render(scene, camera, time, overlay = null) {
     const r = this.renderer;
     this.uniforms.uTime.value = time;
     r.setRenderTarget(this.rt);
     r.render(scene, camera);
+    if (overlay) renderOverlay(r, overlay, camera);
     r.setRenderTarget(null);
     r.render(this.post, this.postCam);
   }
+}
+
+export function renderOverlay(renderer, overlay, camera) {
+  const auto = renderer.autoClear;
+  renderer.autoClear = false;
+  renderer.clearDepth();
+  renderer.render(overlay, camera);
+  renderer.autoClear = auto;
 }

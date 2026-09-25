@@ -113,6 +113,10 @@ export const CONFIG = {
     decay: 2.0,            // caída física: no quema lo que tienes al lado
     spill: { intensity: 16, distance: 8 }, // rebote suave alrededor del jugador
     swayResponse: 7,       // qué tan rápido sigue la mirada (menos = más lag de mano)
+    // Dónde la llevas: agarre en coordenadas de cámara (m; x derecha, y arriba,
+    // z hacia atrás) y distancia del punto al que apunta, sobre tu mirada.
+    hold: { x: 0.16, y: -0.15, z: -0.27 },
+    aimDistance: 12,
     batterySeconds: 420,   // segundos totales de luz encendida (7 min)
     // Estados de batería (GDD): umbral inferior → multiplicadores
     tiers: [
