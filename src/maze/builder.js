@@ -100,6 +100,10 @@ export function buildMazeScene(scene, maze, CFG, rand, quality) {
     metalness: 0.35,
   });
 
+  // Metal gris con óxido: tuberías y bidones (en la referencia, casi negros)
+  const metalTex = makePipeTexture(rand);
+  const drumMat = new THREE.MeshStandardMaterial({ map: metalTex, roughness: 0.62, metalness: 0.4 });
+
   const woodMat = new THREE.MeshStandardMaterial({
     map: makeWoodTexture(rand),
     roughness: 0.92,
@@ -176,12 +180,15 @@ export function buildMazeScene(scene, maze, CFG, rand, quality) {
   }
 
   // --- piso y techo ---
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(W * t, H * t), floorMat);
+  // Subdivididos por casilla, como hacía la PS1: con el anclaje de vértices,
+  // un plano de dos triángulos gigantes inclina su profundidad unos
+  // centímetros y se "come" los charcos y manchas pegados al suelo.
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(W * t, H * t, W, H), floorMat);
   floor.rotation.x = -Math.PI / 2;
   floor.receiveShadow = true;
   scene.add(floor);
 
-  const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(W * t, H * t), ceilMat);
+  const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(W * t, H * t, W, H), ceilMat);
   ceiling.rotation.x = Math.PI / 2;
   ceiling.position.y = wallH;
   ceiling.receiveShadow = true;
@@ -197,6 +204,9 @@ export function buildMazeScene(scene, maze, CFG, rand, quality) {
       map: makeStainTexture(rand, blood),
       transparent: true,
       depthWrite: false,
+      polygonOffset: true, // calcomanía: siempre por encima del suelo
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
       roughness: 0.85,
     });
     const mesh = new THREE.InstancedMesh(stainGeo, mat, count);
@@ -224,8 +234,11 @@ export function buildMazeScene(scene, maze, CFG, rand, quality) {
     map: makePuddleTexture(rand),
     transparent: true,
     depthWrite: false,
-    roughness: 0.14, // lámina de agua: brillo especular bajo la linterna
-    metalness: 0.2,
+    polygonOffset: true,
+    polygonOffsetFactor: -3,
+    polygonOffsetUnits: -3,
+    roughness: 0.06, // lámina de agua: brillo especular bajo la linterna
+    metalness: 0.1,
   });
   const puddles = new THREE.InstancedMesh(puddleGeo, puddleMat, P.puddles.count);
   for (let i = 0; i < P.puddles.count; i++) {
@@ -239,7 +252,7 @@ export function buildMazeScene(scene, maze, CFG, rand, quality) {
     dummy.scale.set(s, s, 1);
     dummy.updateMatrix();
     puddles.setMatrixAt(i, dummy.matrix);
-    puddleList.push({ x: px, z: pz, r: 0.62 * s });
+    puddleList.push({ x: px, z: pz, r: 0.6 * s }); // un poco más que el agua visible: pisar el borde también suena
   }
   puddles.instanceMatrix.needsUpdate = true;
   puddles.renderOrder = 2;
@@ -312,14 +325,7 @@ export function buildMazeScene(scene, maze, CFG, rand, quality) {
     pipeGeos.push(g);
   }
   if (pipeGeos.length) {
-    const pipeTex = makePipeTexture(rand);
-    pipeTex.repeat.set(1, 1);
-    const pipeMat = new THREE.MeshStandardMaterial({
-      map: pipeTex,
-      roughness: 0.62,
-      metalness: 0.4,
-    });
-    const pipes = new THREE.Mesh(mergeGeometries(pipeGeos), pipeMat);
+    const pipes = new THREE.Mesh(mergeGeometries(pipeGeos), drumMat);
     pipes.castShadow = true;
     pipes.receiveShadow = true;
     scene.add(pipes);
@@ -456,7 +462,7 @@ export function buildMazeScene(scene, maze, CFG, rand, quality) {
   // --- barriles metálicos arrimados a las paredes ---
   if (P.barrels.count) {
     const barrelGeo = new THREE.CylinderGeometry(0.32, 0.32, 0.92, 12);
-    const barrels = new THREE.InstancedMesh(barrelGeo, rustMat, P.barrels.count);
+    const barrels = new THREE.InstancedMesh(barrelGeo, drumMat, P.barrels.count);
     for (let i = 0; i < P.barrels.count; i++) {
       const [x, y] = pickFloor();
       const dirs = wallDirs(x, y);

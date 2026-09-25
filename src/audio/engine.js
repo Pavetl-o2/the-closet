@@ -101,18 +101,25 @@ export class AudioEngine {
     this.master.gain.value = this.cfg.masterVolume;
     this.master.connect(ctx.destination);
 
+    // Filtro general: en pausa todo se oye como a través de una pared.
+    this.masterFilter = ctx.createBiquadFilter();
+    this.masterFilter.type = 'lowpass';
+    this.masterFilter.frequency.value = 20000;
+    this.masterFilter.Q.value = 0.5;
+    this.masterFilter.connect(this.master);
+
     // Bus seco y bus de reverb. Las fuentes mandan a los dos; cuánto va a
     // cada uno depende de la distancia y de si hay un muro de por medio.
     this.dry = ctx.createGain();
-    this.dry.connect(this.master);
+    this.dry.connect(this.masterFilter);
 
     if (this.q.reverb !== false) {
       this.convolver = ctx.createConvolver();
-      this.convolver.buffer = makeCorridorIR(ctx);
+      this.convolver.buffer = makeCorridorIR(ctx, 2.2, 2.4);
       this.wet = ctx.createGain();
       this.wet.gain.value = this.cfg.reverbLevel;
       this.wet.connect(this.convolver);
-      this.convolver.connect(this.master);
+      this.convolver.connect(this.masterFilter);
     }
 
     // Ruido blanco compartido: base de pasos, respiración, goteos y roces
@@ -126,12 +133,38 @@ export class AudioEngine {
 
   resume() { this.ctx?.resume?.(); }
 
+  // Pausa: la mezcla se apaga hacia los graves, sin cortar.
+  muffle(on) {
+    if (!this.ctx) return;
+    this.masterFilter.frequency.setTargetAtTime(on ? 380 : 20000, this.time, on ? 0.12 : 0.3);
+    this.master.gain.setTargetAtTime(this.cfg.masterVolume * (on ? 0.55 : 1), this.time, 0.2);
+  }
+
+  // Curva de saturación (tanh) para dar aspereza a las voces. Se cachea por k.
+  shaperCurve(k) {
+    this._curves ??= new Map();
+    if (!this._curves.has(k)) {
+      const n = 1024;
+      const curve = new Float32Array(n);
+      const norm = Math.tanh(k);
+      for (let i = 0; i < n; i++) {
+        const x = (i / (n - 1)) * 2 - 1;
+        curve[i] = Math.tanh(k * x) / norm;
+      }
+      this._curves.set(k, curve);
+    }
+    return this._curves.get(k);
+  }
+
   get time() { return this.ctx ? this.ctx.currentTime : 0; }
 
   // Muerte y victoria: silencio (GDD)
   silence() {
     this.dead = true;
-    if (this.ctx) this.master.gain.setTargetAtTime(0, this.time, 0.05);
+    if (this.ctx) {
+      this.master.gain.cancelScheduledValues(this.time);
+      this.master.gain.setTargetAtTime(0, this.time, 0.05);
+    }
   }
 
   setWorld(mazeInfo) { this.maze = mazeInfo; }
@@ -215,6 +248,52 @@ export class AudioEngine {
     return { input: filter, panner };
   }
 
+  // Cadena espacial PERSISTENTE: la de una fuente que se mueve mientras suena
+  // (la voz del monstruo, el zumbido de un foco). Las voces se conectan a
+  // `input` y la posición se actualiza cada frame; la oclusión se suaviza para
+  // que doblar una esquina no suene a interruptor.
+  spatialBus({ reverbSend = 1, rolloff = 1 } = {}) {
+    if (!this.ctx) return null;
+    const ctx = this.ctx;
+    const input = ctx.createGain();
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 20000;
+    filter.Q.value = 0.7;
+    const occGain = ctx.createGain();
+    const panner = ctx.createPanner();
+    panner.panningModel = this.q.hrtf === false ? 'equalpower' : 'HRTF';
+    panner.distanceModel = 'inverse';
+    panner.refDistance = this.cfg.refDistance;
+    panner.maxDistance = this.cfg.maxDistance;
+    panner.rolloffFactor = this.cfg.rolloff * rolloff;
+    input.connect(filter).connect(occGain).connect(panner);
+    panner.connect(this.dry);
+    let send = null;
+    if (this.wet) {
+      send = ctx.createGain();
+      send.gain.value = reverbSend * 0.4;
+      panner.connect(send).connect(this.wet);
+    }
+    const self = this;
+    return {
+      input,
+      x: 0, y: 0, z: 0,
+      setPosition(x, y, z) {
+        this.x = x; this.y = y; this.z = z;
+        const t = self.time;
+        setPos(panner, x, y, z, t);
+        const o = self.occlusion(x, z);
+        const d = Math.hypot(x - self.listenerPos.x, z - self.listenerPos.z);
+        const byWall = 20000 * Math.pow(0.035, o);
+        const byAir = 20000 * Math.pow(0.35, Math.min(1, d / self.cfg.maxDistance));
+        filter.frequency.setTargetAtTime(Math.max(220, Math.min(byWall, byAir)), t, 0.15);
+        occGain.gain.setTargetAtTime(1 - 0.62 * o, t, 0.15);
+        if (send) send.gain.setTargetAtTime(reverbSend * (0.4 + 0.6 * o), t, 0.15);
+      },
+    };
+  }
+
   // Presupuesto de voces por prioridad. Los sonidos que dan INFORMACIÓN (los
   // pasos del monstruo, su respiración) pueden usar todo el presupuesto; los
   // tuyos y el ambiente se cortan antes, dejando hueco reservado.
@@ -239,17 +318,23 @@ export class AudioEngine {
   // Aquí es donde luego entran los samples: misma firma, otra fuente.
 
   // Golpe/roce de ruido filtrado, situado en el mundo
-  noiseAt(x, y, z, { freq, q = 1, vol, attack = 0.005, decay = 0.2, reverbSend = 1, budget = 1 }) {
+  noiseAt(x, y, z, {
+    freq, q = 1, vol, attack = 0.005, decay = 0.2, reverbSend = 1, budget = 1,
+    type = 'bandpass', delay = 0, rate = 1, sweep = 0, dest = null,
+  }) {
     if (!this.canPlay(budget)) return;
     const ctx = this.ctx;
-    const t = this.time;
+    const t = this.time + delay;
     const src = ctx.createBufferSource();
     src.buffer = this.noiseBuf;
     src.loop = true;
+    src.playbackRate.value = rate;
 
     const band = ctx.createBiquadFilter();
-    band.type = 'bandpass';
-    band.frequency.value = freq;
+    band.type = type;
+    band.frequency.setValueAtTime(freq, t);
+    // barrido del filtro: roces que suben o bajan de tono
+    if (sweep) band.frequency.exponentialRampToValueAtTime(sweep, t + attack + decay);
     band.Q.value = q;
 
     const g = ctx.createGain();
@@ -257,32 +342,39 @@ export class AudioEngine {
     g.gain.exponentialRampToValueAtTime(Math.max(0.0002, vol), t + attack);
     g.gain.exponentialRampToValueAtTime(0.0005, t + attack + decay);
 
-    const chain = this.spatialChain(x, y, z, { reverbSend });
-    src.connect(band).connect(g).connect(chain.input);
-    src.start(t);
+    const input = dest || this.spatialChain(x, y, z, { reverbSend }).input;
+    src.connect(band).connect(g).connect(input);
+    src.start(t, Math.random() * 0.9);
     src.stop(t + attack + decay + 0.05);
-    this.track(src, attack + decay);
+    this.track(src, delay + attack + decay);
   }
 
   // Tono con caída de frecuencia, situado en el mundo
-  toneAt(x, y, z, { type = 'sine', f0, f1, vol, dur = 0.3, reverbSend = 1, budget = 1 }) {
+  toneAt(x, y, z, {
+    type = 'sine', f0, f1, vol, dur = 0.3, reverbSend = 1, budget = 1, delay = 0, attack = 0, dest = null,
+  }) {
     if (!this.canPlay(budget)) return;
     const ctx = this.ctx;
-    const t = this.time;
+    const t = this.time + delay;
     const o = ctx.createOscillator();
     o.type = type;
     o.frequency.setValueAtTime(f0, t);
     if (f1 && f1 !== f0) o.frequency.exponentialRampToValueAtTime(f1, t + dur * 0.8);
 
     const g = ctx.createGain();
-    g.gain.setValueAtTime(Math.max(0.0002, vol), t);
-    g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
+    if (attack > 0) {
+      g.gain.setValueAtTime(0.0002, t);
+      g.gain.exponentialRampToValueAtTime(Math.max(0.0002, vol), t + attack);
+    } else {
+      g.gain.setValueAtTime(Math.max(0.0002, vol), t);
+    }
+    g.gain.exponentialRampToValueAtTime(0.0008, t + attack + dur);
 
-    const chain = this.spatialChain(x, y, z, { reverbSend });
-    o.connect(g).connect(chain.input);
+    const input = dest || this.spatialChain(x, y, z, { reverbSend }).input;
+    o.connect(g).connect(input);
     o.start(t);
-    o.stop(t + dur + 0.05);
-    this.track(o, dur);
+    o.stop(t + attack + dur + 0.05);
+    this.track(o, delay + attack + dur);
   }
 
   // Sonido "en la cabeza": el clic de la linterna, tus propios pasos, tu
@@ -300,18 +392,22 @@ export class AudioEngine {
   }
 
   // Ruido filtrado pegado a ti
-  noiseFlat({ freq, q = 1, vol, attack = 0.004, decay = 0.15, reverbSend = 0.8, budget = 1 }) {
+  noiseFlat({
+    freq, q = 1, vol, attack = 0.004, decay = 0.15, reverbSend = 0.8, budget = 1,
+    type = 'bandpass', delay = 0, sweep = 0,
+  }) {
     if (!this.canPlay(budget)) return;
     const ctx = this.ctx;
-    const t = this.time;
+    const t = this.time + delay;
     const src = ctx.createBufferSource();
     src.buffer = this.noiseBuf;
     src.loop = true;
     src.playbackRate.value = 0.85 + Math.random() * 0.3; // nunca dos idénticos
 
     const band = ctx.createBiquadFilter();
-    band.type = 'bandpass';
-    band.frequency.value = freq;
+    band.type = type;
+    band.frequency.setValueAtTime(freq, t);
+    if (sweep) band.frequency.exponentialRampToValueAtTime(sweep, t + attack + decay);
     band.Q.value = q;
 
     const g = ctx.createGain();
@@ -320,16 +416,16 @@ export class AudioEngine {
     g.gain.exponentialRampToValueAtTime(0.0005, t + attack + decay);
 
     src.connect(band).connect(g);
-    this.flat({ node: src, gain: g, dur: attack + decay, reverbSend });
-    src.start(t);
+    this.flat({ node: src, gain: g, dur: delay + attack + decay, reverbSend });
+    src.start(t, Math.random() * 0.9);
     src.stop(t + attack + decay + 0.05);
   }
 
   // Tono pegado a ti
-  toneFlat({ type = 'sine', f0, f1, vol, dur = 0.2, reverbSend = 0.8, budget = 1 }) {
+  toneFlat({ type = 'sine', f0, f1, vol, dur = 0.2, reverbSend = 0.8, budget = 1, delay = 0 }) {
     if (!this.canPlay(budget)) return;
     const ctx = this.ctx;
-    const t = this.time;
+    const t = this.time + delay;
     const o = ctx.createOscillator();
     o.type = type;
     o.frequency.setValueAtTime(f0, t);
@@ -338,7 +434,7 @@ export class AudioEngine {
     g.gain.setValueAtTime(Math.max(0.0002, vol), t);
     g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
     o.connect(g);
-    this.flat({ node: o, gain: g, dur, reverbSend });
+    this.flat({ node: o, gain: g, dur: delay + dur, reverbSend });
     o.start(t);
     o.stop(t + dur + 0.05);
   }

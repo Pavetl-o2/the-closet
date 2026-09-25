@@ -9,7 +9,10 @@
   --laton: #c2b183;
   --oxido: #9a4f33;
   --apagado: #6a6f63;
+  --sangre: #9b2418;
   --mono: ui-monospace, 'Cascadia Mono', 'Courier New', monospace;
+  /* tipografía de pantalla de la época (VT323), con respaldo monoespaciado */
+  --pixel: 'VT323', ui-monospace, 'Courier New', monospace;
   --display: Georgia, 'Times New Roman', serif;
 }
 
@@ -55,6 +58,8 @@ body.touch .only-desktop { display: none; }
 body.psx #vignette { display: none; }
 
 /* ---------- overlays ---------- */
+/* Pantallas de la época: fondo casi negro con líneas de barrido, títulos
+   rasterizados a baja resolución (ver ui/hud.js) y texto de terminal. */
 .overlay {
   position: fixed;
   inset: 0;
@@ -62,55 +67,70 @@ body.psx #vignette { display: none; }
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 16px;
-  background: rgba(2, 3, 3, 0.94);
+  gap: 14px;
+  background: rgba(2, 3, 3, 0.9);
   color: var(--hueso);
+  font-family: var(--pixel);
   text-align: center;
   cursor: pointer;
   z-index: 10;
   padding: 24px;
 }
 
-.overlay h1 {
-  font-family: var(--display);
-  font-weight: 400;
-  font-size: clamp(28px, 6vw, 54px);
-  letter-spacing: 0.5em;
-  padding-left: 0.5em; /* compensa el tracking del último carácter */
-  margin: 0 0 4px;
-  animation: parpadeo 7s infinite;
+.overlay::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0.32) 0 1px, transparent 1px 3px);
 }
 
+.overlay h1 {
+  margin: 0 0 6px;
+  font-weight: 400;
+}
+
+.pixel-title canvas {
+  display: block;
+  width: min(78vw, 640px);
+  height: auto;
+  image-rendering: crisp-edges;
+  image-rendering: pixelated;
+  animation: parpadeo 7s infinite, temblor 5.3s infinite steps(1);
+}
+
+#screen-pause .pixel-title canvas { width: min(40vw, 260px); }
+
 .tag {
-  font-family: var(--display);
-  font-style: italic;
+  font-size: 22px;
+  letter-spacing: 0.06em;
   color: var(--apagado);
   margin: 0;
 }
 
 .controls {
-  font-family: var(--mono);
-  font-size: 12px;
-  letter-spacing: 0.12em;
+  font-size: 18px;
+  letter-spacing: 0.08em;
   color: var(--apagado);
-  margin: 28px 0 0;
+  margin: 26px 0 0;
 }
 
 .hint {
-  font-family: var(--mono);
-  font-size: 12px;
-  letter-spacing: 0.18em;
+  font-size: 22px;
+  letter-spacing: 0.14em;
   color: var(--laton);
   margin: 0;
 }
 
 .seed {
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  color: #3f443c;
-  margin-top: 26px;
+  font-size: 17px;
+  letter-spacing: 0.12em;
+  color: #4a4f46;
+  margin-top: 24px;
 }
+
+/* "PRESS START": parpadeo seco, sin fundido */
+.blink { animation: blink 1.1s steps(1) infinite; }
 
 .fade-black {
   background: #000;
@@ -121,13 +141,14 @@ body.psx #vignette { display: none; }
 
 .again {
   margin-top: 14px;
-  padding: 10px 18px;
+  padding: 8px 18px;
   background: transparent;
-  border: 1px solid #3f443c;
+  border: 2px solid #3f443c;
+  border-radius: 0;
   color: var(--apagado);
-  font-family: var(--mono);
-  font-size: 12px;
-  letter-spacing: 0.16em;
+  font-family: var(--pixel);
+  font-size: 18px;
+  letter-spacing: 0.12em;
   cursor: pointer;
 }
 
@@ -210,13 +231,15 @@ body.psx #vignette { display: none; }
 }
 
 /* ---------- HUD ---------- */
+/* Batería en celdas, como la vida en un juego de PS1, y un "foco" cuadrado
+   que se enciende con la linterna. Nada más (GDD). */
 #hud {
   position: fixed;
   left: 22px;
   bottom: 20px;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   z-index: 5;
   pointer-events: none;
 }
@@ -228,27 +251,28 @@ body.touch #hud {
 }
 
 #battery {
-  width: 130px;
-  height: 5px;
-  background: #141613;
-  border: 1px solid #2c2f29;
+  display: flex;
+  gap: 3px;
+  padding: 3px;
+  border: 2px solid #2c2f29;
+  background: rgba(0, 0, 0, 0.45);
 }
 
-#battery-fill {
-  height: 100%;
-  width: 100%;
+#battery .cell {
+  width: 16px;
+  height: 8px;
   background: var(--laton);
-  transition: width 0.35s linear, background 0.4s;
 }
 
-#battery-fill.low { background: var(--oxido); }
+#battery .cell.low { background: var(--oxido); }
+#battery .cell.off { background: #151713; }
+#battery .cell.blink { animation: blink 0.5s steps(1) infinite; }
 
 #light-dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
+  width: 10px;
+  height: 10px;
   background: #ffe9c4;
-  box-shadow: 0 0 8px 2px rgba(255, 233, 196, 0.55);
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.45);
   opacity: 0.12;
   transition: opacity 0.18s;
 }
@@ -260,16 +284,31 @@ body.touch #hud {
   94% { opacity: 0.8; }
 }
 
+/* Un salto de un píxel de vez en cuando, como una imagen de vídeo compuesto */
+@keyframes temblor {
+  0%, 100% { transform: none; }
+  61% { transform: translateX(3px); }
+  62% { transform: none; }
+  83% { transform: translate(-2px, 1px); }
+  84% { transform: none; }
+}
+
+@keyframes blink {
+  0% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .overlay h1 { animation: none; }
+  .pixel-title canvas, .blink { animation: none; }
 }
 
 /* Horizontal en un teléfono deja muy poca altura: se comprime la tipografía
    de los overlays para que quepa sin recortar. */
 @media (orientation: landscape) and (max-height: 520px) {
   .overlay { gap: 8px; padding: 14px; }
-  .overlay h1 { font-size: clamp(22px, 4.6vw, 34px); letter-spacing: 0.34em; }
-  .controls { margin-top: 14px; font-size: 11px; }
+  .pixel-title canvas { width: min(60vw, 420px); }
+  .tag, .hint { font-size: 18px; }
+  .controls { margin-top: 12px; font-size: 15px; }
   .seed { margin-top: 12px; }
   #btn-light { width: 66px; height: 66px; font-size: 12px; }
   #stick-base { width: 112px; height: 112px; margin: -56px 0 0 -56px; }

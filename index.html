@@ -8,6 +8,10 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="description" content="THE CLOSET — horror psicológico procedural. La luz te guía. La luz te delata." />
   <title>THE CLOSET</title>
+  <!-- Tipografía de pantalla de la época; si no carga, se usa la monoespaciada del sistema -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet" />
 </head>
 <body>
   <div id="app"></div>
@@ -15,7 +19,7 @@
 
   <!-- HUD minimalista (GDD): batería + intensidad de luz. Nada más. -->
   <div id="hud">
-    <div id="battery"><div id="battery-fill"></div></div>
+    <div id="battery" aria-label="batería"></div>
     <div id="light-dot"></div>
   </div>
 
@@ -30,25 +34,26 @@
   </div>
 
   <div class="overlay" id="screen-start">
-    <h1>THE&nbsp;CLOSET</h1>
+    <h1 class="pixel-title" data-text="THE CLOSET" data-px="24">THE CLOSET</h1>
     <p class="tag">La puerta se cerró detrás de ti.</p>
     <p class="controls only-desktop">WASD moverse&ensp;·&ensp;SHIFT correr&ensp;·&ensp;F / clic linterna</p>
     <p class="controls only-touch">
       pulgar izquierdo moverse&ensp;·&ensp;empuja al tope para correr<br />
       arrastra a la derecha para mirar&ensp;·&ensp;LUZ enciende la linterna
     </p>
-    <p class="hint" id="start-hint">cargando&hellip;</p>
+    <p class="hint" id="start-hint">CARGANDO&hellip;</p>
     <p class="seed" id="seed-label"></p>
   </div>
 
   <div class="overlay hidden" id="screen-pause">
-    <p class="hint only-desktop">clic para continuar</p>
-    <p class="hint only-touch">toca para continuar</p>
+    <h1 class="pixel-title" data-text="PAUSA" data-px="18">PAUSA</h1>
+    <p class="hint blink only-desktop">CLIC PARA CONTINUAR</p>
+    <p class="hint blink only-touch">TOCA PARA CONTINUAR</p>
   </div>
 
   <div class="overlay fade-black hidden" id="screen-dead">
     <div id="dead-text" class="hidden">
-      <h1>TE&nbsp;ENCONTRÓ.</h1>
+      <h1 class="pixel-title" data-text="TE ENCONTRÓ." data-color="#9b2418" data-px="22">TE ENCONTRÓ.</h1>
       <p class="seed" id="dead-info"></p>
       <p class="hint only-desktop">ENTER mismo laberinto&ensp;·&ensp;R uno nuevo</p>
       <p class="hint only-touch">
@@ -60,7 +65,7 @@
 
   <div class="overlay fade-black hidden" id="screen-win">
     <div id="win-text" class="hidden">
-      <h1>SALISTE.</h1>
+      <h1 class="pixel-title" data-text="SALISTE." data-px="22">SALISTE.</h1>
       <p class="seed" id="win-info"></p>
       <p class="hint only-desktop">ENTER mismo laberinto&ensp;·&ensp;R uno nuevo</p>
       <p class="hint only-touch">

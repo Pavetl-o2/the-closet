@@ -19,6 +19,7 @@ import { HUD } from './ui/hud.js';
 import { detectDevice, AdaptiveResolution } from './core/device.js';
 import { TouchControls } from './input/touch.js';
 import { installVertexSnap, PSXPipeline } from './render/psx.js';
+import { Ripples } from './world/ripples.js';
 
 const seed = getSeedFromURL();
 const rand = mulberry32(seed);
@@ -91,6 +92,9 @@ const flashlight = new Flashlight(scene, CONFIG.FLASHLIGHT, profile);
 
 const audio = new Soundscape(new AudioEngine(CONFIG.AUDIO, profile), CONFIG.AUDIO);
 audio.setWorld(M, built);
+// Cada gota que suena en un charco deja su onda en el agua
+const ripples = new Ripples(scene);
+audio.onDrip = (x, z) => ripples.spawn(x, z);
 const hud = new HUD();
 hud.setText('seed-label', `semilla ${seed}`);
 
@@ -120,13 +124,15 @@ function spawnMonsters(proto) {
     const tile = candidates[(rand() * candidates.length) | 0];
     spawnTiles.push(tile);
     const mon = new Monster(scene, M, CONFIG.MONSTER, rand, tile, CONFIG.DEBUG, proto);
+    const index = monsters.length;
     mon.onState = (from, to) => {
-      if (to === STATES.HUNT) audio.huntSting();
+      if (to === STATES.HUNT) audio.huntSting(mon, index); // alarido + estridencia
     };
     monsters.push(mon);
   }
   monstersReady = true;
-  hud.setText('start-hint', isTouch ? 'toca para entrar' : 'clic para entrar');
+  hud.setText('start-hint', isTouch ? 'TOCA PARA ENTRAR' : 'PULSA PARA ENTRAR');
+  document.getElementById('start-hint').classList.add('blink');
 }
 
 loadMonsterModel(profile).then(spawnMonsters).catch((err) => {
@@ -190,10 +196,12 @@ function beginDeath(mon) {
   deathT = 0;
   player.enabled = false;
   touchControls?.setVisible(false); // que nada tape el último plano
-  audio.deathSting();
+  audio.deathSting(mon, monsters.indexOf(mon));
 }
 
 // ---------- transiciones de estado (comunes a ratón y dedo) ----------
+let firstStart = true;
+
 function startPlaying() {
   if (state !== 'start' && state !== 'paused') return;
   state = 'playing';
@@ -201,7 +209,18 @@ function startPlaying() {
   hud.hideAll();
   lockGraceT = 0.25;
   audio.resume();
+  audio.muffle(false);
   touchControls?.setVisible(true);
+  if (firstStart) {
+    // "La puerta se cerró detrás de ti": se oye, a tu espalda, al empezar
+    firstStart = false;
+    const yaw = player.rig.rotation.y;
+    audio.doorSlam(
+      player.position.x + Math.sin(yaw) * 1.2,
+      player.position.z + Math.cos(yaw) * 1.2,
+      0.7
+    );
+  }
 }
 
 function pauseGame() {
@@ -209,11 +228,12 @@ function pauseGame() {
   state = 'paused';
   player.enabled = false;
   touchControls?.setVisible(false);
+  audio.muffle(true); // el laberinto sigue ahí, tras una pared
   hud.show('pause');
 }
 
 function toggleLight() {
-  if (state === 'playing' && flashlight.toggle()) audio.click();
+  if (state === 'playing' && flashlight.toggle()) audio.click(flashlight.on, flashlight.battery);
 }
 
 // ---------- input ----------
@@ -359,7 +379,20 @@ function loop() {
     for (const mon of monsters) mon.update(dt, player.position, flashlight, player);
     updateLamps(built.lamps, built.lampPool, elapsed, player.position);
     audio.update(dt, { monsters, player, camera, flashlight });
+    ripples.update(dt);
     hud.setBattery(flashlight.battery, flashlight.lightLevel);
+
+    // El miedo también se ve: la imagen se ensucia, los bordes se cierran y
+    // late en rojo con tu corazón. Y con algo encima, la mano tiembla.
+    if (psx) {
+      psx.uniforms.uDanger.value = audio.danger;
+      psx.uniforms.uPulse.value = audio.pulse;
+    }
+    const shake = Math.max(0, audio.danger - 0.55) * 0.012;
+    if (shake > 0) {
+      camera.position.x += (Math.random() - 0.5) * shake;
+      camera.position.y += (Math.random() - 0.5) * shake;
+    }
 
     // Lo que suena y lo que te delata son ahora la misma cosa: el sistema de
     // pasos decide cuánto ruido has hecho según lo que pisas (chapotear y
@@ -392,6 +425,10 @@ function loop() {
 
     killer.approachForKill(player.position, dt);
     flashlight.update(dt, camera);
+    if (psx) {
+      psx.uniforms.uDanger.value = 1;
+      psx.uniforms.uPulse.value = Math.random();
+    }
 
     // Fogonazo tembloroso que lo revela aunque tu linterna esté apagada
     camera.getWorldPosition(_camPos);
@@ -416,6 +453,7 @@ loop();
 if (new URLSearchParams(location.search).has('debug')) {
   window.__game = {
     scene, camera, renderer, player, flashlight, monsters, built, maze,
-    CONFIG, profile, adaptive, isTouch, audio, psx,
+    CONFIG, profile, adaptive, isTouch, audio, psx, ripples,
   };
+  import('./audio/voice.js').then((m) => { window.__voice = m; });
 }

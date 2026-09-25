@@ -299,15 +299,17 @@ export function makePuddleTexture(rand) {
   for (let i = 0; i < 6; i++) {
     blob(ctx, 128 + (rand() - 0.5) * 60, 128 + (rand() - 0.5) * 60, 58 + rand() * 36, '18,17,15', 0.3);
   }
+  // Lámina de agua translúcida: deja ver el cemento debajo, más oscuro y
+  // frío. Opaca y negra se leía como un agujero.
   for (let i = 0; i < 6; i++) {
     const a = rand() * Math.PI * 2;
-    const d = rand() * 44;
-    wobbly(ctx, rand, 128 + Math.cos(a) * d, 128 + Math.sin(a) * d, 26 + rand() * 30);
-    ctx.fillStyle = 'rgba(13,15,17,0.93)';
+    const d = rand() * 36;
+    wobbly(ctx, rand, 128 + Math.cos(a) * d, 128 + Math.sin(a) * d, 38 + rand() * 30);
+    ctx.fillStyle = 'rgba(30,35,40,0.5)';
     ctx.fill();
   }
   // reflejo tenue del techo en el centro
-  blob(ctx, 128 + (rand() - 0.5) * 30, 128 + (rand() - 0.5) * 30, 34, '60,64,66', 0.35);
+  blob(ctx, 128 + (rand() - 0.5) * 30, 128 + (rand() - 0.5) * 30, 40, '92,98,104', 0.3);
 
   pixelNoise(c, rand, 8);
   return finishDecal(c);

@@ -1,6 +1,6 @@
 # THE CLOSET — Fase 1 (MVP jugable)
 
-Horror psicológico procedural en Three.js. Estás atrapado en un laberinto de ladrillo viejo, tuberías oxidadas y focos colgantes que parpadean. Solo tienes una linterna. La luz te guía — y también te delata: con ella encendida, lo que te caza es más rápido que tú; apágala y perderá el interés… si logras avanzar entre las islas de luz enferma.
+Horror psicológico procedural en Three.js, con aspecto de juego de PlayStation 1. Estás atrapado en un laberinto de pasillos de cemento gris, con cables colgando de los muros, tuberías y focos que parpadean. Solo tienes una linterna. La luz te guía — y también te delata: con ella encendida, lo que te caza es más rápido que tú; apágala y te perderá la pista… si logras avanzar entre las islas de luz enferma sin que te oiga.
 
 Esta carpeta implementa la **Fase 1 del roadmap del GDD**: movimiento, linterna, laberinto procedural, IA básica y salida.
 
@@ -29,7 +29,9 @@ Para desplegar en Vercel basta con importar el repo: detecta Vite automáticamen
 
 **Móvil (horizontal):** pulgar izquierdo en cualquier punto de la mitad izquierda para el joystick — es analógico, el recorrido gradúa la velocidad y al llegar al tope se corre. Arrastrar en la mitad derecha para mirar. Botón **LUZ** abajo a la derecha para la linterna, **II** arriba a la derecha para pausar. En las pantallas de final, un toque genera otro laberinto y el botón *repetir este* rehace el mismo.
 
-En ambos casos, con audífonos.
+En ambos casos, con audífonos: la mitad de la información del juego es sonido.
+
+`?psx=0` en la URL desactiva la estética PS1 y vuelve al render a resolución completa.
 
 ## Móvil
 
@@ -42,7 +44,7 @@ Qué recorta el perfil táctil, y por qué:
 | Ajuste | Escritorio | Táctil | Motivo |
 | --- | --- | --- | --- |
 | Luces dinámicas de lámpara | 12 (todas) | 4 más cercanas | El coste por fragmento de cada luz es lo que hunde el frame rate en un GPU de móvil. |
-| Resolución | fija (DPR hasta 1.75) | adaptativa, 0.6–1.3 | Se ajusta sola según el frame time: la palanca más eficaz y la que no hay que adivinar. |
+| Resolución | ~240 líneas (PS1) | ~240 líneas (PS1) | Con la estética PS1 ambos perfiles dibujan a resolución de consola y escalan por un factor entero: el coste de píxel es irrisorio. Con `?psx=0` vuelve la resolución fija (escritorio) o adaptativa 0.6–1.3 (táctil). |
 | Antialias | sí | no | Con resolución adaptativa rinde mejor gastar los píxeles en resolución. |
 | Mapa de sombras | 1024², PCF suave | 512², PCF | La sombra del haz es media atmósfera del juego, así que se conserva; solo baja de resolución. |
 | Textura del monstruo | 4096² (la del GLB) | 1024² | 4096² son ~67 MB de VRAM para algo que casi siempre se ve a oscuras y de lejos. |
@@ -67,9 +69,11 @@ Cada partida es un laberinto distinto. La semilla aparece en la pantalla de inic
 | `src/input/touch.js` | Joystick analógico, arrastre de mirada y botones (solo móvil). |
 | `src/maze/generator.js` | Lógica pura: backtracker, salas, braiding, entrada/salida por doble BFS. |
 | `src/maze/nav.js` | BFS de distancias y caminos, línea de visión sobre la grilla. |
-| `src/maze/builder.js` | Geometría: muros instanciados, piso/techo, tuberías, cables, charcos, cajas, tarimas, barriles, libros, ropa, vidrios, manchas, focos colgantes, puerta de salida. |
-| `src/world/textures.js` | Texturas procedurales en canvas (ladrillo, concreto, plafón, óxido, madera, charco, manchas). Sin assets externos. |
+| `src/maze/builder.js` | Geometría: muros instanciados con unión curva al techo, piso/techo subdivididos, tuberías y cables en catenaria pegados al muro, charcos, cajas, tarimas, bidones, libros, ropa, vidrios, manchas, focos colgantes, puerta de salida. |
+| `src/world/textures.js` | Texturas procedurales en canvas a resolución de PS1 (yeso y cemento gris, techo, metal, óxido, madera, charco, manchas). Sin assets externos. |
 | `src/world/atmosphere.js` | Niebla, luz ambiental base, parpadeo de los focos colgantes. |
+| `src/world/ripples.js` | Ondas en los charcos, sincronizadas con cada gota que suena. |
+| `src/render/psx.js` | Estética PS1: resolución de 240 líneas con escala entera, color de 15 bits con dithering, grano, vértices anclados a la rejilla y la reacción de la imagen al peligro. |
 | `src/player/player.js` | FPS: pointer lock, colisión circular contra la grilla, fase de zancada (vaivén + pasos), FOV al correr. |
 | `src/flashlight/flashlight.js` | Spotlight amplio con sway de mano + luz de rebote, estados de batería del GDD, parpadeo al 10%. |
 | `src/monster/monster.js` | Tipo A: percepción por luz + oído + FSM (IDLE → INVESTIGATE → HUNT → SEARCH). Velocidad de cacería según tu linterna. |
@@ -77,8 +81,9 @@ Cada partida es un laberinto distinto. La semilla aparece en la pantalla de inic
 | `src/monster/animation.js` | Ciclo de marcha de zombi: cojera, pie arrastrado y piernas por cinemática inversa. |
 | `src/assets/monster.glb` | Modelo del monstruo (malla + esqueleto). Único asset externo del proyecto. |
 | `src/audio/engine.js` | Motor espacial: listener orientado, HRTF por fuente, oclusión por muros, reverb de pasillo, fábricas de voz. |
-| `src/audio/soundscape.js` | Qué suena y cuándo: pasos, presencia, respiración, chapoteos, ambiente, estridencias. |
-| `src/ui/hud.js` | Batería + punto de intensidad de luz, y las pantallas de inicio/pausa/final. |
+| `src/audio/voice.js` | La voz del monstruo sintetizada por formantes: gemido, alarido y gruñido. |
+| `src/audio/soundscape.js` | Qué suena y cuándo: pasos, voz del monstruo, goteo, focos, latido, tensión, susurros, ruidos del edificio. |
+| `src/ui/hud.js` | Batería en celdas + punto de luz, títulos pixelados y las pantallas de inicio/pausa/final. |
 | `scripts/test-maze.mjs` | Test de conectividad y estadísticas del generador. |
 
 ## Dónde ajustar qué (`src/config.js`)
@@ -97,6 +102,8 @@ Las perillas que más cambian la experiencia:
 9. `AUDIO.reverbLevel`, `AUDIO.rolloff` y `AUDIO.refDistance` — cuánto pasillo se oye rebotar y a qué ritmo cae el sonido con la distancia.
 10. `PLAYER.strideWalk/strideRun` — cadencia de tus pasos y del vaivén de cámara (van juntos).
 11. `AUDIO.holdBreathDistance/holdBreathMax` — cuándo contienes la respiración y cuánto aguantas.
+12. `RENDER.psx` — la estética PS1: líneas de resolución, bits de color, grano, desaturación, rejilla de vértices.
+13. `MONSTER.darkDropSeconds` y `MONSTER.darkSenseStill/Move/Run` — cuánto tarda en perderte al apagar la luz y a qué distancia te sigue sintiendo según lo que haga tu cuerpo.
 
 `?debug` en la URL expone `window.__game` en consola para inspección.
 
@@ -104,7 +111,19 @@ Las perillas que más cambian la experiencia:
 
 ## Decisiones de diseño de esta fase
 
-**Interior cerrado, con techo.** La ambientación elegida es de corredores viejos de ladrillo con tuberías; el techo a 3.2 m encierra la luz de la linterna y elimina cualquier referencia de cielo, reforzando la desorientación que pide el GDD.
+**Interior cerrado, con techo.** Pasillos de servicio de cemento y yeso gris, con la unión del muro y el techo redondeada como un túnel, un cable grueso sujeto al muro que cuelga en bucles entre anclajes, tuberías de metal pegadas bajo la moldura, tarimas recargadas y bidones oscuros. El techo a 3.2 m encierra la luz de la linterna y elimina cualquier referencia de cielo, reforzando la desorientación que pide el GDD.
+
+**Aspecto de PlayStation 1** (`src/render/psx.js`). Lo que hace que algo "se vea de PS1" no es un filtro de color sino las limitaciones del hardware, y son las que se reproducen:
+
+- *240 líneas de resolución* escaladas con vecino más cercano y **factor entero** en píxeles físicos (con factor no entero salen filas de 4 y de 5 px). En un monitor 1080p son 384×216 ×5; en uno de 768 líneas, 342×256 ×3; en un teléfono en horizontal, 507×234 ×5.
+- *Color de 15 bits* (32 niveles por canal) con **dithering Bayer 4×4**, como hacía la consola para disimular el banding.
+- *Vértices anclados a la rejilla de píxeles*: la geometría "tiembla" al mover la cámara. Se inyecta en todos los materiales, incluido el monstruo, sin tocar su modelo.
+- *Texturas de 64–128 px sin filtrar.*
+- Encima, grano de película, desaturación casi monocroma y viñeta.
+
+A propósito **no** se reproduce el mapeo afín de texturas: la PS1 lo disimulaba subdividiendo la geometría y aquí deformaría pasillos enteros. Suelo y techo sí se subdividen por casilla, como en la consola, porque con el anclaje de vértices un plano de dos triángulos gigantes inclinaba su profundidad y se tragaba los charcos.
+
+**La luz base nunca es negro.** Con la linterna apagada se leen los muros y las siluetas a unos metros, como en la referencia. El número de `ambientIntensity` (30) parece enorme porque la luz hemisférica de three.js se divide entre π y el cemento apenas refleja: con el valor anterior la vista sin linterna medía 2 sobre 255 — negro puro.
 
 **Focos colgantes: la oscuridad tiene islas.** Repartidos por el laberinto hay focos que parpadean y a veces se apagan. Cumplen dos funciones: le dan al lugar su cara macabra (nunca es negro total: siempre hay algo a medio ver) y hacen viable avanzar con la linterna apagada, que es la mitad del dilema central. Sin ellos, apagar la luz no sería una opción sino un suicidio.
 
@@ -128,6 +147,18 @@ El rig reconstruido queda **alineado a los ejes del modelo** (sin rotaciones loc
 - **El pie muerto arrastra de verdad.** La pierna derecha va rezagada, con la rodilla agarrotada y la punta clavada hacia abajo, pegada al suelo todo el ciclo (altura medida: 0.008–0.018 m corriendo). La izquierda es la que marca el paso exacto; la derecha raspa hacia adelante en la recuperación, que es justo lo que se quiere ver.
 
 Una pasada final mide dónde acabó cada punta y reajusta el tobillo: el cabeceo del pie, el balanceo de la pelvis y el giro del pie muerto se acumulan de formas difíciles de predecir, y medir sale más barato que compensarlo analíticamente.
+
+**Apagar la luz te esconde — pero no te vuelve invisible.** Si el monstruo te está cazando y apagas la linterna, en 0.4 s pierde la pista (un parpadeo de pila baja no cuenta). Se queda quieto casi dos segundos, escuchando, gruñe de frustración y se pone a registrar la zona donde te vio por última vez. A oscuras solo te siente de cerca, y cuánto de cerca depende de tu cuerpo: quieto, a 1 m; andando, a 2.4 m con línea de visión; corriendo, a 5 m aunque haya una esquina de por medio (te oye). Y si no sabe que estás ahí solo te atrapa si choca contigo: **pegado al muro, a oscuras y conteniendo la respiración, puede pasarte al lado sin verte.** Medido en simulación con la misma semilla:
+
+| Situación | Resultado |
+| --- | --- |
+| Luz encendida, quieto | te atrapa en 1.2 s |
+| Luz encendida, huyes corriendo | te atrapa (6.1 m/s contra tus 5.4) |
+| Apagas a 5 m y te quedas quieto en mitad del pasillo | deja de cazarte en 0.38 s… y su ronda te pasa por encima |
+| Apagas a 5 m y te quedas quieto pegado al muro | deja de cazarte y te pasa al lado |
+| Apagas y te alejas andando o corriendo | deja de cazarte y te pierde |
+
+Ruidos fuertes (charcos, vidrios) siguen delatándote aunque estés a oscuras.
 
 **La percepción del monstruo nunca hace trampa.** No conoce tu posición: acumula una señal solo cuando la luz está encendida, más fuerte con línea de visión y más débil como "resplandor" que dobla esquinas. La posición que estima lleva ruido proporcional a la distancia. Pisar un charco lo delata a la inversa: los monstruos a menos de 15 m oyen el chapoteo y rastrean tu ubicación unos segundos. Existe un sesgo de merodeo (`patrolBiasNearPlayer`) que solo decide *hacia qué zona* patrulla para mantener vivos los encuentros; está documentado y se puede poner en 0.
 
@@ -166,13 +197,31 @@ El motor no decide qué suena: solo cómo llega al oído. Las fuentes se crean c
 
 **Todo sigue sintetizado, sin assets.** Pasos de cada monstruo (con el roce del pie muerto alternando), un zumbido grave de presencia que ahora **sale del monstruo** en vez de la mezcla, así que se puede localizar; respiración a la altura de su cara cuando lo tienes encima; una estridencia inconfundible al arrancar una cacería; chapoteos al pisar charcos, que rebotan por el pasillo y son justo el ruido que te delata; y goteras y crujidos desde **casillas reales del laberinto**, no paneos al azar — así que también se ocluyen: un goteo detrás de un muro suena sordo, y eso es información, no decorado. Se apaga con `AUDIO.enabled = false`.
 
+**Tiene voz (y es lo más parecido a un ReDead).** `src/audio/voice.js` sintetiza la voz del monstruo por formantes: dos sierras desafinadas y un subarmónico que la vuelve ronca, saturación para la aspereza, aliento, y tres filtros de formante que se mueven de "uuu" a "aaa" y de vuelta, como una boca que se abre mientras se queja, con un temblor de sollozo. Tres registros: el **gemido** de sufrimiento a intervalos; el **alarido** rasgado cuando empieza a cazarte (y en tu cara al atraparte); y un **gruñido** corto cuando te pierde a oscuras. Sale de su cabeza por un bus espacial persistente, así que viaja con él mientras suena, se tapa detrás de los muros y rebota en el pasillo. Cuanto más cerca, más fuerte **y más seguido**: a 16 m es un lamento lejano (−49 dBFS), a 8 m ya se impone (−40), a 3 m es casi continuo y está 13 dB por encima de tus propios pasos.
+
+**Pasos realistas, y los charcos siempre suenan.** Cada paso se construye en capas que varían en cada pisada: el talón (golpe sordo), el peso del cuerpo, la suela que rueda hasta la punta y la arenilla que cruje debajo; corriendo, un derrape corto al despegar. Los dos pies no suenan exactamente igual. En agua: golpe, salpicadura que sube de tono al abrirse, rocío y gotitas que caen después. **Entrar en un charco suena al instante**, aunque la zancada caiga al otro lado — antes se podía cruzar uno pequeño sin mojarse — y al salir, la suela mojada chasquea unos pasos más. El monstruo también chapotea: si pisa un charco lo oyes aunque no lo veas.
+
+**Los charcos gotean.** Cada charco tiene su ritmo (unos pocos, con una gotera activa encima, gotean seguido). La gota es un "plip" de tono que sube muy rápido — la burbuja que se forma al entrar — con mucho eco de pasillo, y deja una onda visible en el agua (`src/world/ripples.js`): si la ves con la linterna, sabes de dónde venía el sonido.
+
+**Capa de suspenso.** Lo que no es del mundo sino tuyo:
+
+- *Latido* de 60 a 150 pulsaciones según el peligro que **percibes** (lo cerca que suena algo, menos si hay un muro de por medio, mucho más si te está cazando). La imagen late con él: se ensucia de grano, los bordes se cierran y pulsan en rojo, y con algo encima la cámara tiembla.
+- *Tono de sala* (el "silencio" del sitio nunca es cero) y un *lecho de tensión* de notas que baten y se desafinan despacio, que solo aparece cuando algo se acerca; en el peor momento, un pitido de oído.
+- *Focos que zumban* a 100 Hz con su parpadeo real, y *chasquean* cuando se apagan de golpe.
+- *El edificio*: cada 25–55 s, lejos, alguien golpea una tubería, algo metálico cae y rebota, una puerta se cierra de golpe, una tubería gime, algo raspa el suelo. **Nunca imitan al monstruo** (GDD: nunca hacer trampa), pero bastan para dudar.
+- *Susurros* ininteligibles pegados a un oído, solo si llevas más de cinco segundos quieto a oscuras y nada cerca.
+- *La puerta*: al empezar se oye, a tu espalda, cerrarse de golpe la puerta por la que entraste.
+- *Clic de linterna* en dos tiempos (resorte y enganche) y chisporroteo del contacto con la pila baja. En pausa, todo se oye como a través de una pared.
+
+**Interfaz de la época.** Títulos rasterizados a baja resolución con el borde de las letras cortado a píxel duro y escalados sin suavizar, con saltos de imagen de vídeo compuesto; "PULSA PARA ENTRAR" parpadeando en seco; tipografía de terminal (VT323); líneas de barrido; la batería en cinco celdas que se oxidan por debajo del 25 % y parpadean en la última.
+
 **La muerte te lo muestra un instante.** Captura → tu mirada se gira hacia él, se echa encima con los brazos estirados y la cara volcada sobre la cámara, y un fogonazo tembloroso lo revela durante nueve décimas de segundo; después, corte a negro y silencio (GDD). Verlo de cerca solo al morir mantiene el resto del misterio intacto.
 
 ## Limitaciones conocidas de la Fase 1
 
 Los props (cajas, barriles, tarimas, tuberías…) son decorativos y no tienen colisión. No hay música. No hay pickups de batería (Fase 2).
 
-Del audio queda por hacer: no hay capa de tensión ligada a la percepción del monstruo (`awareness`), ni música, y toda la síntesis está pendiente de sustituirse por foley grabado — las fábricas de voz del motor están hechas justamente para ese cambio. Correr sobre concreto genera ruido (0.35) pero no llega al umbral que delata (0.5): la perilla está puesta por si se quiere que correr también te cueste.
+Del audio queda por hacer: no hay música, y toda la síntesis está pendiente de sustituirse por foley grabado — las fábricas de voz del motor (y `voice.js` para el monstruo) están hechas justamente para ese cambio. El latido baja a los graves: en altavoces de teléfono se oye poco. Correr sobre concreto genera ruido (0.35) pero no llega al umbral que delata (0.5): la perilla está puesta por si se quiere que correr también te cueste.
 
 En móvil no hay un tercer perfil para gama baja: si un teléfono no llega, la resolución adaptativa baja hasta 0.6 y ahí se queda (apagar sombras sería el siguiente escalón, ya cableado en `QUALITY.touch.shadows`). Tampoco se han medido teléfonos reales — los perfiles están razonados sobre lo que cuesta cada cosa, no calibrados con un dispositivo en mano.
 
@@ -181,6 +230,6 @@ El ciclo de marcha del monstruo es único: no hay transiciones entre animaciones
 ## Estado del roadmap
 
 - [x] **Fase 1** — Movimiento · Linterna · Laberinto procedural · IA básica · Salida
-- [ ] **Fase 2** — Sonido espacial ✅ · Baterías · Eventos ambientales · Mejor IA (estado de Sospecha con evidencia sonora)
+- [ ] **Fase 2** — Sonido espacial ✅ · Voz del monstruo y capa de suspenso ✅ · Estética PS1 ✅ · Baterías · Eventos ambientales · Mejor IA (estado de Sospecha con evidencia sonora)
 - [ ] **Fase 3** — Laberinto dinámico · Linterna consciente · Variantes del monstruo (Tipos A/B/C)
 - [ ] **Fase 4** — Optimización · Demo (móvil en horizontal ya soportado)
