@@ -4,12 +4,15 @@
 // automáticamente; toda información entra por su percepción:
 //   · tu luz, con línea de visión → señal fuerte
 //   · el resplandor de tu luz doblando esquinas → señal débil
-//   · presencia a muy corta distancia → te siente
+//   · presencia a muy corta distancia → te siente (a oscuras, cuánto de
+//     cerca depende del ruido que haga tu cuerpo: quieto, andando, corriendo)
 //   · un chapoteo en un charco → rastrea tu posición unos segundos
 // FSM: IDLE (patrulla) → INVESTIGATE (señal) → HUNT (confirmado) → SEARCH (perdió el rastro).
 //
 // El dilema de la luz es asimétrico: con la linterna encendida caza más
-// rápido de lo que corres; con la luz apagada es lento y te olvida pronto.
+// rápido de lo que corres. Apagarla corta la cacería: si no te tiene encima
+// ni te oye, en menos de medio segundo pierde la pista y se pone a buscar
+// donde te vio por última vez.
 
 import * as THREE from 'three';
 import { bfsPath, losClear } from '../maze/nav.js';
@@ -58,6 +61,9 @@ export class Monster {
     this.pathIdx = 0;
     this.repathT = 0;
     this.chaseT = 0;
+    this.darkT = 0;      // segundos seguidos con tu linterna apagada
+    this.pauseT = 0;     // pausa de escucha al perderte a oscuras
+    this.lostInDark = false; // la última cacería terminó porque apagaste la luz
     this.lookT = 0;
     this.searchPoints = [];
     this.time = rand() * 10;
@@ -155,9 +161,14 @@ export class Monster {
     this.goTo(wx, wz, 0);
   }
 
-  enterSearch(cx, cz) {
+  // `lostInDark`: te perdió porque apagaste la luz. Primero se queda quieto
+  // escuchando, desorientado, y luego registra la zona sin ir directo al
+  // punto exacto: apagar te esconde, pero no te vuelve invisible — si te
+  // quedas pegado a donde te vio, su ronda puede pasarte por encima.
+  enterSearch(cx, cz, lostInDark = false) {
     const c = this.cfg;
     this.searchPoints = [];
+    this.pauseT = lostInDark ? c.darkListenSeconds : 0;
     const [tx, ty] = this.maze.worldToTile(cx, cz);
     for (let i = 0; i < c.searchWaypoints; i++) {
       for (let tries = 0; tries < 16; tries++) {
@@ -169,7 +180,8 @@ export class Monster {
         }
       }
     }
-    this.goTo(cx, cz, 0);
+    if (lostInDark) this.path = null; // tras la pausa sigue con los puntos de búsqueda
+    else this.goTo(cx, cz, 0);
     // Evita el ping-pong búsqueda↔cacería sin señal nueva
     this.awareness = Math.min(this.awareness, c.awarenessInvestigate * 0.6);
     this.setState(STATES.SEARCH);
@@ -180,6 +192,7 @@ export class Monster {
     if (direct || senses || this.awareness >= c.awarenessHunt) {
       this.lastSeen.set(playerPos.x, playerPos.z);
       this.chaseT = c.loseSightSeconds;
+      this.lostInDark = false;
       this.goTo(playerPos.x, playerPos.z, c.repathInterval);
       this.setState(STATES.HUNT);
       return true;
@@ -215,7 +228,8 @@ export class Monster {
 
   // ---------- ciclo principal ----------
 
-  update(dt, playerPos, flashlight) {
+  // `body` es el jugador: si se mueve y si corre decide cuánto se le oye.
+  update(dt, playerPos, flashlight, body = {}) {
     const c = this.cfg;
     const m = this.group.position;
 
@@ -228,6 +242,9 @@ export class Monster {
     const [pfx, pfy] = this.maze.worldToTileF(playerPos.x, playerPos.z);
     const los = losClear(this.maze.grid, mfx, mfy, pfx, pfy);
     const light = flashlight.lightLevel > 0.05;
+    // Un parpadeo de batería baja no cuenta como apagar: hace falta oscuridad
+    // sostenida (darkDropSeconds) para que pierda la pista.
+    this.darkT = light ? 0 : this.darkT + dt;
 
     // --- percepción (luz a distancia + ruidos recientes) ---
     let gain = 0;
@@ -259,7 +276,17 @@ export class Monster {
       this.lastSignal.set(playerPos.x, playerPos.z);
     }
 
-    const senses = d < c.closeSense && los;
+    // A corta distancia te siente. Con luz, a closeSense; a oscuras depende
+    // de lo que haga tu cuerpo: quieto casi hay que tocarte, andando te
+    // intuye a un par de metros y corriendo te oye aunque no te vea.
+    let senses;
+    if (light) {
+      senses = los && d < c.closeSense;
+    } else if (body.isRunning) {
+      senses = d < c.darkSenseRun;
+    } else {
+      senses = los && d < (body.moving ? c.darkSenseMove : c.darkSenseStill);
+    }
     const direct = light && los && d < c.instantHuntDist;
     const signal = (light && (los || d < c.lightLeakRange)) || this.noiseT > 0;
 
@@ -289,9 +316,15 @@ export class Monster {
       }
 
       case STATES.HUNT: {
-        // A oscuras solo te retiene si estás casi encima; sin señal, el
-        // contador de cacería se agota mucho más rápido con la luz apagada.
-        if (signal || (los && d < c.closeSense * 1.5)) {
+        // Apagaste la luz y no te tiene encima ni te oye: pierde la pista y
+        // va a buscar donde te vio por última vez.
+        if (!light && this.darkT >= c.darkDropSeconds && !senses && this.noiseT <= 0) {
+          this.lostInDark = true;
+          this.enterSearch(this.lastSeen.x, this.lastSeen.y, true);
+          break;
+        }
+        const keep = light ? signal || (los && d < c.closeSense * 1.5) : senses || this.noiseT > 0;
+        if (keep) {
           this.chaseT = c.loseSightSeconds;
           this.lastSeen.set(playerPos.x, playerPos.z);
         } else {
@@ -320,6 +353,13 @@ export class Monster {
 
       case STATES.SEARCH: {
         if (this.escalate(direct, senses, playerPos)) break;
+        if (this.pauseT > 0) {
+          // quieto, escuchando: la cabeza barre el pasillo
+          this.pauseT -= dt;
+          this.isMoving = false;
+          this.group.rotation.y += Math.sin(this.time * 1.3) * dt * 0.9;
+          break;
+        }
         if (this.arrived()) {
           const next = this.searchPoints.pop();
           if (next) this.goTo(next[0], next[1], 0);
@@ -331,7 +371,10 @@ export class Monster {
       }
     }
 
-    if (d < c.catchDistance) this.hasCaught = true;
+    // Cazando, te atrapa al alcance de los brazos. Si no sabe que estás ahí,
+    // solo si literalmente choca contigo: pegado al muro, a oscuras y sin
+    // respirar, puede pasarte al lado sin verte.
+    if (d < (this.state === STATES.HUNT ? c.catchDistance : c.bumpDistance)) this.hasCaught = true;
 
     // ---------------- animación ----------------
     // El ciclo de marcha se alimenta de la distancia realmente recorrida en

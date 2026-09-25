@@ -9,8 +9,10 @@ export function setupAtmosphere(scene, CFG) {
   scene.background = new THREE.Color(CFG.RENDER.fogColor);
   scene.fog = new THREE.FogExp2(CFG.RENDER.fogColor, CFG.RENDER.fogDensity);
 
-  // Resto de luz fría: suficiente para orientarse, nunca para sentirse a salvo.
-  const hemi = new THREE.HemisphereLight(0x2b3140, 0x0c0a07, CFG.RENDER.ambientIntensity);
+  // Resto de luz: suficiente para orientarse, nunca para sentirse a salvo.
+  const hemi = new THREE.HemisphereLight(
+    CFG.RENDER.hemiSky, CFG.RENDER.hemiGround, CFG.RENDER.ambientIntensity
+  );
   scene.add(hemi);
 }
 

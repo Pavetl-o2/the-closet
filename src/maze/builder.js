@@ -11,10 +11,44 @@ import {
   makeFloorTexture,
   makeCeilingTexture,
   makeRustTexture,
+  makePipeTexture,
   makeWoodTexture,
   makePuddleTexture,
   makeStainTexture,
 } from '../world/textures.js';
+
+// Moldura cóncava entre muro y techo: un cuarto de cilindro extruido a lo
+// largo de la cara del muro. Ejes locales: X a lo largo del muro, Y arriba,
+// Z hacia el pasillo; el origen está en la base de la cara del muro.
+function makeCoveGeometry(length, wallH, r, segs) {
+  const pos = [];
+  const nor = [];
+  const uv = [];
+  const idx = [];
+  for (let i = 0; i <= segs; i++) {
+    // de apuntando al muro (π) a apuntando arriba (π/2)
+    const a = Math.PI - (i / segs) * (Math.PI / 2);
+    const z = r + r * Math.cos(a);
+    const y = wallH - r + r * Math.sin(a);
+    const nz = -Math.cos(a);
+    const ny = -Math.sin(a);
+    for (const x of [-length / 2, length / 2]) {
+      pos.push(x, y, z);
+      nor.push(0, ny, nz);
+      uv.push(x > 0 ? 1 : 0, i / segs);
+    }
+  }
+  for (let i = 0; i < segs; i++) {
+    const a = i * 2, b = a + 1, c = a + 3, d = a + 2;
+    idx.push(a, b, c, a, c, d); // cara frontal hacia el pasillo
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  return g;
+}
 
 export function buildMazeScene(scene, maze, CFG, rand, quality) {
   const { grid, W, H } = maze;
@@ -112,6 +146,35 @@ export function buildMazeScene(scene, maze, CFG, rand, quality) {
   walls.receiveShadow = true;
   scene.add(walls);
 
+  // --- molduras curvas entre muro y techo ---
+  // En la referencia el pasillo no es una caja: la unión del muro con el
+  // techo es redondeada, como un túnel de servicio. Se modela con un cuarto
+  // de cilindro cóncavo en cada cara de muro que da a un pasillo.
+  const coveR = CFG.MAZE.coveRadius;
+  if (coveR > 0) {
+    const coveGeo = makeCoveGeometry(t, wallH, coveR, 6);
+    const coves = [];
+    for (const [x, y] of visible) {
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        if (!isWall(x + dx, y + dy)) coves.push([x, y, dx, dy]);
+      }
+    }
+    const coveMesh = new THREE.InstancedMesh(coveGeo, wallMat, coves.length);
+    coves.forEach(([x, y, dx, dy], i) => {
+      const [wx, wz] = tileToWorld(x, y);
+      dummy.position.set(wx + dx * (t / 2), 0, wz + dy * (t / 2));
+      dummy.rotation.set(0, Math.atan2(dx, dy), 0); // +Z local → hacia el pasillo
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      coveMesh.setMatrixAt(i, dummy.matrix);
+      coveMesh.setColorAt(i, col.setScalar(0.72 + rand() * 0.25));
+    });
+    coveMesh.instanceMatrix.needsUpdate = true;
+    if (coveMesh.instanceColor) coveMesh.instanceColor.needsUpdate = true;
+    coveMesh.receiveShadow = true;
+    scene.add(coveMesh);
+  }
+
   // --- piso y techo ---
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(W * t, H * t), floorMat);
   floor.rotation.x = -Math.PI / 2;
@@ -161,8 +224,8 @@ export function buildMazeScene(scene, maze, CFG, rand, quality) {
     map: makePuddleTexture(rand),
     transparent: true,
     depthWrite: false,
-    roughness: 0.1,
-    metalness: 0.65,
+    roughness: 0.14, // lámina de agua: brillo especular bajo la linterna
+    metalness: 0.2,
   });
   const puddles = new THREE.InstancedMesh(puddleGeo, puddleMat, P.puddles.count);
   for (let i = 0; i < P.puddles.count; i++) {
@@ -207,35 +270,58 @@ export function buildMazeScene(scene, maze, CFG, rand, quality) {
     }
   }
 
-  // --- tuberías oxidadas: parte constante de la ambientación ---
-  const pipeRuns = runs.filter((r) => r.len >= P.pipes.minRun && rand() < P.pipes.chance);
-  pipeRuns.length = Math.min(pipeRuns.length, P.pipes.max);
+  // Fracción del tramo que tiene muro a un lado (+1/-1). Sirve para no
+  // colgar tuberías ni cables en mitad de una sala.
+  const sideSolidity = (r, side) => {
+    let n = 0;
+    for (let k = 0; k < r.len; k++) {
+      const [tx, ty] = r.axis === 'x' ? [r.a + k, r.b + side] : [r.b + side, r.a + k];
+      if (isWall(tx, ty)) n++;
+    }
+    return n / r.len;
+  };
 
-  if (pipeRuns.length) {
-    const pipeGeo = new THREE.CylinderGeometry(P.pipes.radius, P.pipes.radius, 1, 10);
-    const pipes = new THREE.InstancedMesh(pipeGeo, rustMat, pipeRuns.length);
-    pipeRuns.forEach((r, i) => {
-      const worldLen = r.len * t - 0.4;
-      const side = (t / 2 - 0.32) * (rand() < 0.5 ? 1 : -1);
-      if (r.axis === 'x') {
-        const [wx0] = tileToWorld(r.a, r.b);
-        const [wx1] = tileToWorld(r.a + r.len - 1, r.b);
-        const [, wz] = tileToWorld(r.a, r.b);
-        dummy.position.set((wx0 + wx1) / 2, P.pipes.height, wz + side);
-        dummy.rotation.set(0, 0, Math.PI / 2); // eje Y → eje X
-      } else {
-        const [, wz0] = tileToWorld(r.b, r.a);
-        const [, wz1] = tileToWorld(r.b, r.a + r.len - 1);
-        const [wx] = tileToWorld(r.b, r.a);
-        dummy.position.set(wx + side, P.pipes.height, (wz0 + wz1) / 2);
-        dummy.rotation.set(Math.PI / 2, 0, 0); // eje Y → eje Z
-      }
-      dummy.scale.set(1, worldLen, 1);
-      dummy.updateMatrix();
-      pipes.setMatrixAt(i, dummy.matrix);
+  // --- tuberías: parte constante de la ambientación ---
+  // Pegadas al muro, justo bajo la moldura, como la de la referencia. Pueden
+  // cruzar la boca de un pasillo lateral (así van las tuberías de verdad),
+  // pero el tramo tiene que ser mayormente muro. Van fusionadas en una malla
+  // con la textura repetida a lo largo: estirar 64 px sobre 20 m la
+  // convertía en vetas de madera.
+  const pipeGeos = [];
+  for (const r of runs) {
+    if (pipeGeos.length >= P.pipes.max) break;
+    if (r.len < P.pipes.minRun || rand() >= P.pipes.chance) continue;
+    let side = rand() < 0.5 ? 1 : -1;
+    if (sideSolidity(r, side) < 0.7) side = -side;
+    if (sideSolidity(r, side) < 0.7) continue;
+
+    const worldLen = r.len * t - 0.1;
+    const g = new THREE.CylinderGeometry(P.pipes.radius, P.pipes.radius, worldLen, 8, 1, true);
+    const uv = g.attributes.uv;
+    for (let k = 0; k < uv.count; k++) uv.setY(k, uv.getY(k) * worldLen * 0.8);
+    const off = (t / 2 - P.pipes.wallGap) * side;
+    if (r.axis === 'x') {
+      const [wx0, wz] = tileToWorld(r.a, r.b);
+      const [wx1] = tileToWorld(r.a + r.len - 1, r.b);
+      g.rotateZ(Math.PI / 2).translate((wx0 + wx1) / 2, P.pipes.height, wz + off);
+    } else {
+      const [wx, wz0] = tileToWorld(r.b, r.a);
+      const [, wz1] = tileToWorld(r.b, r.a + r.len - 1);
+      g.rotateX(Math.PI / 2).translate(wx + off, P.pipes.height, (wz0 + wz1) / 2);
+    }
+    pipeGeos.push(g);
+  }
+  if (pipeGeos.length) {
+    const pipeTex = makePipeTexture(rand);
+    pipeTex.repeat.set(1, 1);
+    const pipeMat = new THREE.MeshStandardMaterial({
+      map: pipeTex,
+      roughness: 0.62,
+      metalness: 0.4,
     });
-    pipes.instanceMatrix.needsUpdate = true;
+    const pipes = new THREE.Mesh(mergeGeometries(pipeGeos), pipeMat);
     pipes.castShadow = true;
+    pipes.receiveShadow = true;
     scene.add(pipes);
   }
 
@@ -261,6 +347,67 @@ export function buildMazeScene(scene, maze, CFG, rand, quality) {
     const curve = new THREE.CatmullRomCurve3([p0, mid, p1]);
     const cable = new THREE.Mesh(new THREE.TubeGeometry(curve, 12, 0.018, 5), cableMat);
     scene.add(cable);
+  }
+
+  // --- cables en catenaria a lo largo de los muros ---
+  // El detalle más reconocible de la referencia: un cable grueso sujeto al
+  // muro cada pocos metros, colgando en bucles entre anclaje y anclaje.
+  // Todos van fusionados en una sola malla (una llamada de dibujo).
+  // El cable no cruza huecos: el tramo se parte en segmentos de muro corrido
+  // y cada uno se cuelga por separado.
+  const WC = P.wallCables;
+  const wallSegments = [];
+  for (const run of runs) {
+    if (run.len < 2 || rand() >= WC.chance) continue;
+    const side = rand() < 0.5 ? 1 : -1;
+    let k0 = -1;
+    for (let k = 0; k <= run.len; k++) {
+      const [tx, ty] = run.axis === 'x' ? [run.a + k, run.b + side] : [run.b + side, run.a + k];
+      const solid = k < run.len && isWall(tx, ty);
+      if (solid && k0 < 0) k0 = k;
+      if (!solid && k0 >= 0) {
+        if (k - k0 >= 2) wallSegments.push({ axis: run.axis, a: run.a + k0, b: run.b, len: k - k0, side });
+        k0 = -1;
+      }
+    }
+  }
+  const wallCableGeos = [];
+  for (const r of wallSegments) {
+    const { side } = r;
+    const [sx, sz] = r.axis === 'x' ? tileToWorld(r.a, r.b) : tileToWorld(r.b, r.a);
+    const along = r.axis === 'x' ? [1, 0] : [0, 1];
+    const across = r.axis === 'x' ? [0, side] : [side, 0];
+    const wallOff = t / 2 - 0.07;
+    const start = -t / 2 + 0.25;
+    const length = r.len * t - 0.5;
+    const spans = Math.max(1, Math.round(length / WC.spacing));
+    const pts = [];
+    for (let sIdx = 0; sIdx < spans; sIdx++) {
+      const sag = WC.sagMin + rand() * (WC.sagMax - WC.sagMin);
+      for (let k = 0; k < 8; k++) {
+        const u = k / 8;
+        const d = start + ((sIdx + u) / spans) * length;
+        const y = WC.height - sag * 4 * u * (1 - u);
+        pts.push(new THREE.Vector3(
+          sx + along[0] * d + across[0] * wallOff, y, sz + along[1] * d + across[1] * wallOff
+        ));
+      }
+    }
+    const dEnd = start + length;
+    pts.push(new THREE.Vector3(
+      sx + along[0] * dEnd + across[0] * wallOff, WC.height, sz + along[1] * dEnd + across[1] * wallOff
+    ));
+    const curve = new THREE.CatmullRomCurve3(pts);
+    wallCableGeos.push(new THREE.TubeGeometry(curve, spans * 8, WC.radius, 4));
+  }
+  if (wallCableGeos.length) {
+    const merged = mergeGeometries(wallCableGeos);
+    // Un poco más claro que el negro: en la referencia el cable se recorta
+    // contra el muro, no desaparece en él.
+    const wallCableMat = new THREE.MeshStandardMaterial({ color: 0x1c1b1a, roughness: 0.7 });
+    const wallCables = new THREE.Mesh(merged, wallCableMat);
+    wallCables.castShadow = true;
+    scene.add(wallCables);
   }
 
   // --- cajas de madera: callejones sin salida + dispersas por los pasillos ---
@@ -503,7 +650,10 @@ export function buildMazeScene(scene, maze, CFG, rand, quality) {
     // La bombilla no necesita iluminarse: emite. Un material básico sin tone
     // mapping es el shader más barato posible y se lee como filamento.
     const bulbGeo = new THREE.SphereGeometry(0.05, 8, 6);
-    const bulbMat = new THREE.MeshBasicMaterial({ color: 0xffd9a8, toneMapped: false });
+    const bulbMat = new THREE.MeshBasicMaterial({ color: P.lamps.bulbColor, toneMapped: false });
+    // Por encima de 1 en lineal: tras el tone mapping de la pasada PS1 la
+    // bombilla sigue leyéndose como la fuente de luz más brillante.
+    bulbMat.color.multiplyScalar(4);
     const bulbs = new THREE.InstancedMesh(bulbGeo, bulbMat, lamps.length);
 
     lamps.forEach((l, i) => {
@@ -527,7 +677,7 @@ export function buildMazeScene(scene, maze, CFG, rand, quality) {
   const lampPool = [];
   const poolSize = Math.min(lamps.length, quality.maxLampLights);
   for (let i = 0; i < poolSize; i++) {
-    const light = new THREE.PointLight(0xffb26a, 0, 10, 2);
+    const light = new THREE.PointLight(P.lamps.color, 0, P.lamps.range, 2);
     scene.add(light);
     lampPool.push(light);
   }

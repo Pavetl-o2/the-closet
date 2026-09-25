@@ -37,7 +37,12 @@ body {
 body.touch .only-touch { display: block; }
 body.touch .only-desktop { display: none; }
 
-#app canvas { display: block; }
+#app canvas {
+  display: block;
+  /* La pasada PS1 dibuja a ~240 líneas; el navegador la escala sin suavizar */
+  image-rendering: crisp-edges;
+  image-rendering: pixelated;
+}
 
 #vignette {
   position: fixed;
@@ -46,6 +51,8 @@ body.touch .only-desktop { display: none; }
   background: radial-gradient(ellipse at center, transparent 52%, rgba(0, 0, 0, 0.82) 100%);
   z-index: 2;
 }
+
+body.psx #vignette { display: none; }
 
 /* ---------- overlays ---------- */
 .overlay {

@@ -13,14 +13,32 @@ export const CONFIG = {
     wallHeight: 3.2,
     braidChance: 0.45, // prob. de abrir un callejón sin salida → loops y atajos
     rooms: { count: 4, sizes: [3, 5] }, // salas pequeñas (lado en tiles, impar)
+    coveRadius: 0.55,  // unión curva muro-techo: el aspecto de túnel de la referencia
   },
 
   RENDER: {
     fov: 70,
     exposure: 1.2,     // súbelo si tu pantalla es muy oscura
-    fogColor: 0x04050a,
-    fogDensity: 0.045, // más alto = menos visibilidad
-    ambientIntensity: 0.85, // luz base: siluetas navegables, nunca claridad
+    fogColor: 0x040404,
+    fogDensity: 0.05,  // más alto = menos visibilidad
+    // Luz base: siluetas navegables, nunca claridad. El número es grande
+    // porque la luz hemisférica de three.js se divide entre π en el BRDF y el
+    // cemento apenas refleja; con 0.85 la vista sin linterna era negro puro.
+    ambientIntensity: 30,
+    hemiSky: 0x3a3a37,      // luz base neutra, como la referencia (antes azulada)
+    hemiGround: 0x0e0d0b,
+
+    // Estética PlayStation 1 (ver render/psx.js). enabled: false vuelve al
+    // render a resolución completa de antes.
+    psx: {
+      enabled: true,
+      height: 240,        // líneas de resolución interna (la PS1 usaba 240)
+      colorBits: 5,       // bits por canal: 5 = color de 15 bits
+      grain: 0.045,       // grano de película
+      saturation: 0.62,   // la referencia es casi monocroma
+      tint: 0xf2eee0,     // ligero tono sucio, cálido
+      snap: 1.0,          // rejilla de vértices; < 1 = más temblor
+    },
   },
 
   // Perfiles de calidad. El de escritorio es el original: nada cambia ahí.
@@ -115,8 +133,9 @@ export const CONFIG = {
     // correr; con la luz apagada es más lento que tú y pierde interés.
     huntSpeedLit: 6.1,       // > runSpeed → con luz, correr no basta
     huntSpeedDark: 3.4,      // < runSpeed → a oscuras puedes escapar
-    catchDistance: 1.15,
-    closeSense: 3.2,         // te "siente" a corta distancia aunque no haya luz
+    catchDistance: 1.15,     // cazando: alcance de sus brazos
+    bumpDistance: 0.75,      // sin saber que estás: solo si choca contigo
+    closeSense: 3.2,         // con tu luz encendida te "siente" a esta distancia
     instantHuntDist: 8,      // luz directa + línea de visión a esta distancia → cacería
     lightVisionRange: 24,    // distancia máx. a la que ve tu luz con línea de visión
     lightLeakRange: 14,      // resplandor que "dobla esquinas" (sin línea de visión)
@@ -127,6 +146,13 @@ export const CONFIG = {
     repathInterval: 0.4,
     loseSightSeconds: 3.5,   // cacería sin señal antes de pasar a búsqueda (luz on)
     loseSightSecondsDark: 1.6, // apagar la luz corta la cacería mucho antes
+    // Apagar la luz te esconde: tras darkDropSeconds a oscuras deja de
+    // perseguirte, salvo que te perciba por lo cerca que estás o el ruido.
+    darkDropSeconds: 0.4,
+    darkListenSeconds: 1.8,  // al perderte se queda quieto escuchando
+    darkSenseStill: 1.0,     // a oscuras y quieto: casi tiene que tocarte
+    darkSenseMove: 2.4,      // andando a oscuras (con línea de visión)
+    darkSenseRun: 5,         // corriendo te oye, aunque haya una esquina
     searchWaypoints: 3,
     searchRadiusTiles: 4,
     hearingRange: 15,        // metros a los que oye un chapoteo en un charco
@@ -162,13 +188,21 @@ export const CONFIG = {
   },
 
   PROPS: {
-    pipes:   { chance: 0.85, minRun: 3, max: 70, height: 2.55, radius: 0.075 },
+    // Pegada al muro, bajo la moldura curva, como la de la referencia
+    pipes:   { chance: 0.85, minRun: 3, max: 70, height: 2.48, radius: 0.09, wallGap: 0.2 },
     puddles: { count: 16, splashCooldown: 1.4 },
     crates:  { deadEndChance: 0.6, scattered: 10 },
-    lamps:   { count: 12, minSepTiles: 4 }, // focos colgantes: islas de luz enferma
+    // Focos colgantes: islas de luz. Luz pálida, más cerca del blanco sucio
+    // de la referencia que del naranja de antes.
+    lamps:   {
+      count: 12, minSepTiles: 4,
+      color: 0xe8dcc0, bulbColor: 0xfff2d8, range: 10,
+    },
     barrels: { count: 10 },
     pallets: { count: 8 },
     cables:  { count: 10 },
+    // Cable grueso sujeto al muro, colgando en bucles entre anclajes
+    wallCables: { chance: 0.6, height: 2.35, spacing: 2.2, sagMin: 0.22, sagMax: 0.5, radius: 0.03 },
     clutter: { books: 20, cloth: 12, glassClusters: 8, bloodStains: 8, grimeStains: 8 },
   },
 };

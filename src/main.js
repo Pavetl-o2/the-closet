@@ -18,6 +18,7 @@ import { Soundscape } from './audio/soundscape.js';
 import { HUD } from './ui/hud.js';
 import { detectDevice, AdaptiveResolution } from './core/device.js';
 import { TouchControls } from './input/touch.js';
+import { installVertexSnap, PSXPipeline } from './render/psx.js';
 
 const seed = getSeedFromURL();
 const rand = mulberry32(seed);
@@ -27,9 +28,15 @@ const rand = mulberry32(seed);
 const { touch: isTouch, profile } = detectDevice();
 document.body.classList.toggle('touch', isTouch);
 
+// Estética PS1 (render/psx.js). El anclaje de vértices se instala antes de
+// que se compile ningún material. ?psx=0 en la URL vuelve al render limpio.
+const PSX = CONFIG.RENDER.psx.enabled && new URLSearchParams(location.search).get('psx') !== '0';
+if (PSX) installVertexSnap();
+document.body.classList.toggle('psx', PSX); // la viñeta la pone la pasada PS1
+
 // ---------- render ----------
 const renderer = new THREE.WebGLRenderer({
-  antialias: profile.antialias,
+  antialias: PSX ? false : profile.antialias, // la PS1 no tenía antialias
   powerPreference: 'high-performance',
 });
 renderer.setSize(innerWidth, innerHeight);
@@ -40,7 +47,11 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = CONFIG.RENDER.exposure;
 document.getElementById('app').appendChild(renderer.domElement);
 
-const adaptive = new AdaptiveResolution(renderer, profile);
+// A 240 líneas el coste de píxel es irrisorio: la resolución adaptativa
+// sobra (y pelearía con la escala entera de la pasada PS1).
+const psx = PSX ? new PSXPipeline(renderer, CONFIG.RENDER.psx, CONFIG.RENDER.exposure) : null;
+const adaptive = new AdaptiveResolution(renderer, PSX ? { adaptiveResolution: false } : profile);
+if (psx) psx.resize(innerWidth, innerHeight);
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(
@@ -319,12 +330,14 @@ document.addEventListener('keydown', (e) => {
 
 addEventListener('resize', () => {
   applyAspect();
-  renderer.setSize(innerWidth, innerHeight);
+  if (psx) psx.resize(innerWidth, innerHeight);
+  else renderer.setSize(innerWidth, innerHeight);
 });
 
 // ---------- bucle principal ----------
 const clock = new THREE.Clock();
 const _camPos = new THREE.Vector3();
+let clockTotal = 0;
 
 function loop() {
   requestAnimationFrame(loop);
@@ -343,7 +356,7 @@ function loop() {
 
     player.update(dt);
     flashlight.update(dt, camera);
-    for (const mon of monsters) mon.update(dt, player.position, flashlight);
+    for (const mon of monsters) mon.update(dt, player.position, flashlight, player);
     updateLamps(built.lamps, built.lampPool, elapsed, player.position);
     audio.update(dt, { monsters, player, camera, flashlight });
     hud.setBattery(flashlight.battery, flashlight.lightLevel);
@@ -392,7 +405,9 @@ function loop() {
     if (deathT >= 0.9) endRun('dead'); // corte a negro y silencio (GDD)
   }
 
-  renderer.render(scene, camera);
+  clockTotal += dt;
+  if (psx) psx.render(scene, camera, clockTotal);
+  else renderer.render(scene, camera);
 }
 
 loop();
@@ -401,6 +416,6 @@ loop();
 if (new URLSearchParams(location.search).has('debug')) {
   window.__game = {
     scene, camera, renderer, player, flashlight, monsters, built, maze,
-    CONFIG, profile, adaptive, isTouch, audio,
+    CONFIG, profile, adaptive, isTouch, audio, psx,
   };
 }
