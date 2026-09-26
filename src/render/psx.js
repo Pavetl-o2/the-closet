@@ -117,7 +117,7 @@ const fragmentShader = /* glsl */ `
     // Grano de película, animado. Con el peligro sube: la imagen se ensucia
     // cuando algo se acerca.
     float n = hash(px + floor(uTime * 24.0) * vec2(17.0, 31.0)) - 0.5;
-    c += n * (uGrain + uDanger * 0.06);
+    c += n * (uGrain + uDanger * 0.035);
 
     // Peligro: bordes que se cierran y un pulso rojo con el latido
     vec2 q = vUv - 0.5;

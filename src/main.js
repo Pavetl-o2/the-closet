@@ -397,7 +397,7 @@ function loop() {
       psx.uniforms.uDanger.value = audio.danger;
       psx.uniforms.uPulse.value = audio.pulse;
     }
-    const shake = Math.max(0, audio.danger - 0.55) * 0.012;
+    const shake = Math.max(0, audio.danger - 0.55) * 0.007;
     if (shake > 0) {
       camera.position.x += (Math.random() - 0.5) * shake;
       camera.position.y += (Math.random() - 0.5) * shake;
@@ -470,4 +470,5 @@ if (new URLSearchParams(location.search).has('debug')) {
     CONFIG, profile, adaptive, isTouch, audio, psx, ripples, heldLight,
   };
   import('./audio/voice.js').then((m) => { window.__voice = m; });
+  import('./audio/water.js').then((m) => { window.__water = m; });
 }

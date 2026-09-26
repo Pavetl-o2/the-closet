@@ -103,7 +103,7 @@ Las perillas que más cambian la experiencia:
 9. `AUDIO.reverbLevel`, `AUDIO.rolloff` y `AUDIO.refDistance` — cuánto pasillo se oye rebotar y a qué ritmo cae el sonido con la distancia.
 10. `PLAYER.strideWalk/strideRun` — cadencia de tus pasos y del vaivén de cámara (van juntos).
 11. `AUDIO.holdBreathDistance/holdBreathMax` — cuándo contienes la respiración y cuánto aguantas.
-12. `RENDER.psx` — la estética PS1: líneas de resolución, bits de color, grano, desaturación, rejilla de vértices.
+12. `RENDER.psx` — la estética PS1: líneas de resolución, bits de color, grano, desaturación, rejilla de vértices (`snap`: 1 = temblor pleno, 2 = la mitad, más = menos). `AUDIO.waterStepVolume` — cuánto suenan las pisadas en charcos.
 13. `MONSTER.darkDropSeconds` y `MONSTER.darkSenseStill/Move/Run` — cuánto tarda en perderte al apagar la luz y a qué distancia te sigue sintiendo según lo que haga tu cuerpo.
 14. `FLASHLIGHT.hold` y `FLASHLIGHT.aimDistance` — dónde llevas la linterna en el campo de visión y a qué distancia converge su haz con tu mirada.
 
@@ -122,6 +122,8 @@ Las perillas que más cambian la experiencia:
 - *Vértices anclados a la rejilla de píxeles*: la geometría "tiembla" al mover la cámara. Se inyecta en todos los materiales, incluido el monstruo, sin tocar su modelo.
 - *Texturas de 64–128 px sin filtrar.*
 - Encima, grano de película, desaturación casi monocroma y viñeta.
+
+El temblor de vértices va a media intensidad (`snap: 2`: cada vértice se desplaza como mucho ±¼ de píxel en vez de ±½) y el grano a 0.028: a pleno rendimiento la imagen se veía demasiado "glitcheada". Para más o menos efecto, esas dos perillas en `RENDER.psx`.
 
 A propósito **no** se reproduce el mapeo afín de texturas: la PS1 lo disimulaba subdividiendo la geometría y aquí deformaría pasillos enteros. Suelo y techo sí se subdividen por casilla, como en la consola, porque con el anclaje de vértices un plano de dos triángulos gigantes inclinaba su profundidad y se tragaba los charcos.
 
@@ -207,7 +209,7 @@ El motor no decide qué suena: solo cómo llega al oído. Las fuentes se crean c
 
 **Tiene voz (y es lo más parecido a un ReDead).** `src/audio/voice.js` sintetiza la voz del monstruo por formantes: dos sierras desafinadas y un subarmónico que la vuelve ronca, saturación para la aspereza, aliento, y tres filtros de formante que se mueven de "uuu" a "aaa" y de vuelta, como una boca que se abre mientras se queja, con un temblor de sollozo. Tres registros: el **gemido** de sufrimiento a intervalos; el **alarido** rasgado cuando empieza a cazarte (y en tu cara al atraparte); y un **gruñido** corto cuando te pierde a oscuras. Sale de su cabeza por un bus espacial persistente, así que viaja con él mientras suena, se tapa detrás de los muros y rebota en el pasillo. Cuanto más cerca, más fuerte **y más seguido**: a 16 m es un lamento lejano (−49 dBFS), a 8 m ya se impone (−40), a 3 m es casi continuo y está 13 dB por encima de tus propios pasos.
 
-**Pasos realistas, y los charcos siempre suenan.** Cada paso se construye en capas que varían en cada pisada: el talón (golpe sordo), el peso del cuerpo, la suela que rueda hasta la punta y la arenilla que cruje debajo; corriendo, un derrape corto al despegar. Los dos pies no suenan exactamente igual. En agua: golpe, salpicadura que sube de tono al abrirse, rocío y gotitas que caen después. **Entrar en un charco suena al instante**, aunque la zancada caiga al otro lado — antes se podía cruzar uno pequeño sin mojarse — y al salir, la suela mojada chasquea unos pasos más. El monstruo también chapotea: si pisa un charco lo oyes aunque no lo veas.
+**Pasos realistas, y los charcos siempre suenan.** Cada paso se construye en capas que varían en cada pisada: el talón (golpe sordo), el peso del cuerpo, la suela que rueda hasta la punta y la arenilla que cruje debajo; corriendo, un derrape corto al despegar. Los dos pies no suenan exactamente igual. En agua, el sonido se genera por **física de burbujas** (`src/audio/water.js`, modelo de van den Doel): lo que el oído reconoce como líquido no es ruido filtrado —eso suena a "shhh"— sino decenas de burbujas diminutas que resuenan un instante y suben de tono al reventar. Cada pisada tiene sus cuatro momentos: el golpe plano de la suela contra la lámina de agua, la nube densa de burbujas del impacto, las gotas que vuelven a caer y, al levantar el pie, el agua que vuelve a su sitio. Se renderizan al arrancar cinco variantes de cada tipo (andar, correr, entrar, suela mojada, pie del monstruo) y en juego cada pisada es **una sola voz** con tono y fuerza al azar; la versión anterior usaba 6–8 voces sueltas y en móvil el presupuesto de voces cortaba capas a medias, que es lo que la hacía sonar rota. **Entrar en un charco suena al instante**, aunque la zancada caiga al otro lado — antes se podía cruzar uno pequeño sin mojarse — y al salir, la suela mojada chasquea unos pasos más. El monstruo también chapotea: si pisa un charco lo oyes aunque no lo veas.
 
 **Los charcos gotean.** Cada charco tiene su ritmo (unos pocos, con una gotera activa encima, gotean seguido). La gota es un "plip" de tono que sube muy rápido — la burbuja que se forma al entrar — con mucho eco de pasillo, y deja una onda visible en el agua (`src/world/ripples.js`): si la ves con la linterna, sabes de dónde venía el sonido.
 

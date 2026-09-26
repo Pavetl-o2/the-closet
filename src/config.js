@@ -34,10 +34,12 @@ export const CONFIG = {
       enabled: true,
       height: 240,        // líneas de resolución interna (la PS1 usaba 240)
       colorBits: 5,       // bits por canal: 5 = color de 15 bits
-      grain: 0.045,       // grano de película
+      grain: 0.028,       // grano de película (antes 0.045: se veía demasiado sucio)
       saturation: 0.62,   // la referencia es casi monocroma
       tint: 0xf2eee0,     // ligero tono sucio, cálido
-      snap: 1.0,          // rejilla de vértices; < 1 = más temblor
+      // Rejilla de vértices en fracciones de píxel: 1 = temblor de PS1 pleno,
+      // 2 = la mitad. Con 1 la geometría "glitcheaba" demasiado al moverse.
+      snap: 2.0,
     },
   },
 
@@ -182,6 +184,7 @@ export const CONFIG = {
 
     // --- tu propio cuerpo ---
     stepVolume: 0.16,     // tus pasos; correr multiplica
+    waterStepVolume: 0.32, // pisadas en charcos (buffers de water.js)
     breathRest: 4.6,      // segundos entre respiraciones, quieto y a salvo
     breathWalk: 3.2,
     breathRun: 1.15,      // corriendo jadeas

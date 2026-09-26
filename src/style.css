@@ -287,9 +287,9 @@ body.touch #hud {
 /* Un salto de un píxel de vez en cuando, como una imagen de vídeo compuesto */
 @keyframes temblor {
   0%, 100% { transform: none; }
-  61% { transform: translateX(3px); }
+  61% { transform: translateX(2px); }
   62% { transform: none; }
-  83% { transform: translate(-2px, 1px); }
+  83% { transform: translateX(-1px); }
   84% { transform: none; }
 }
 

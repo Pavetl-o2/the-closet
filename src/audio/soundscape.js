@@ -19,6 +19,7 @@
 // portazo, algo metálico que cae — pero bastan para dudar.
 
 import { monsterVoice } from './voice.js';
+import { buildWaterBank } from './water.js';
 
 const rnd = (a, b) => a + Math.random() * (b - a);
 const clamp01 = (v) => Math.max(0, Math.min(1, v));
@@ -80,6 +81,26 @@ export class Soundscape {
     this.lampHum = e.hum({ freqs: [119, 238], noiseLevel: 0.02, filterHz: 5200, vol: 0 });
     this.buildBed();
     this.buildLampBuzz();
+    // Pisadas en agua: se renderizan una vez por física de burbujas (water.js)
+    this.water = buildWaterBank(e.ctx);
+    this.lastWater = {};
+  }
+
+  // Una pisada en agua: variante distinta a la anterior, con algo de tono y
+  // fuerza al azar, para que dos pasos seguidos nunca suenen igual.
+  waterStep(kind, vol, at = null) {
+    const list = this.water?.[kind] || this.water?.walk;
+    if (!list) return;
+    let i = (Math.random() * list.length) | 0;
+    if (i === this.lastWater[kind]) i = (i + 1) % list.length;
+    this.lastWater[kind] = i;
+    this.engine.playBuffer(list[i], {
+      vol: vol * rnd(0.85, 1.1) * (this.water[kind] ? 1 : 0.7),
+      rate: rnd(0.92, 1.08),
+      reverbSend: at ? 1.4 : 1.1,
+      budget: at ? B.monstruo : B.propio,
+      at,
+    });
   }
 
   resume() { this.engine.resume(); }
@@ -241,9 +262,8 @@ export class Soundscape {
     const side = foot ? 1 : 0.93;
 
     if (surface === 'agua') {
-      // Si acabas de entrar, el chapoteo de entrada ya sonó: este es menor
-      const k = e.time - this.splashAt < 0.25 ? 0.5 : 1;
-      this.splash(v * k, running);
+      // Si acabas de entrar, el chapoteo de entrada ya sonó: no se duplica
+      if (e.time - this.splashAt > 0.25) this.waterStep(running ? 'run' : 'walk', this.cfg.waterStepVolume);
       this.stepNoise = 1;
       return;
     }
@@ -291,31 +311,9 @@ export class Soundscape {
     if (this.wetSteps > 0) {
       // suela mojada: un chasquido húmedo que se va secando paso a paso
       this.wetSteps--;
-      e.noiseFlat({
-        freq: rnd(1100, 1600), sweep: rnd(2600, 3400), q: 2, vol: v * 0.12 * (1 + this.wetSteps),
-        attack: 0.004, decay: 0.07, delay: 0.02, reverbSend: 1, budget: B.propio,
-      });
+      this.waterStep('squelch', this.cfg.waterStepVolume * 0.3 * (1 + this.wetSteps));
     }
     this.stepNoise = running ? 0.35 : 0;
-  }
-
-  // Pisar agua: el golpe sordo del pie, la salpicadura que sube de tono al
-  // abrirse, el rocío y unas gotitas que caen después.
-  splash(v, running) {
-    const e = this.engine;
-    e.noiseFlat({ type: 'lowpass', freq: 650, q: 0.8, vol: v * 1.3, attack: 0.003, decay: 0.08, reverbSend: 1.2, budget: B.propio });
-    e.noiseFlat({
-      freq: rnd(800, 1200), sweep: rnd(2400, 3400), q: 0.9, vol: v * 1.9,
-      attack: 0.01, decay: rnd(0.18, 0.3), reverbSend: 1.6, budget: B.propio,
-    });
-    e.noiseFlat({ type: 'highpass', freq: 3800, q: 0.7, vol: v * 0.55, attack: 0.006, decay: running ? 0.25 : 0.18, reverbSend: 1.4, budget: B.propio });
-    const drops = running ? 5 : 3;
-    for (let i = 0; i < drops; i++) {
-      e.toneFlat({
-        f0: rnd(700, 1300), f1: rnd(1700, 2800), vol: v * rnd(0.2, 0.45),
-        dur: rnd(0.03, 0.06), delay: rnd(0.06, 0.35), reverbSend: 1.4, budget: B.propio,
-      });
-    }
   }
 
   // Tu respiración. Alterna inhalar y exhalar; el ritmo lo marcan el esfuerzo
@@ -421,12 +419,7 @@ export class Soundscape {
     e.noiseAt(x, 0.1, z, {
       type: 'lowpass', freq: 520, q: 1, vol: hunting ? 0.22 : 0.13, attack: 0.002, decay: 0.07, reverbSend: 1,
     });
-    if (wet) {
-      e.noiseAt(x, 0.05, z, {
-        freq: rnd(800, 1100), sweep: rnd(2200, 3000), q: 0.9, vol: hunting ? 0.4 : 0.26,
-        attack: 0.01, decay: 0.24, reverbSend: 1.5,
-      });
-    }
+    if (wet) this.waterStep('monster', hunting ? 0.6 : 0.4, [x, 0.05, z]);
     if (drag) {
       // el pie que arrastra raspa el suelo entre golpe y golpe
       e.noiseAt(x, 0.08, z, {
@@ -644,7 +637,7 @@ export class Soundscape {
     const wasInWater = this.inWater;
     this.inWater = this.surfaceAt(px, pz) === 'agua';
     if (this.inWater && !wasInWater && player.moving) {
-      this.splash(this.cfg.stepVolume * (player.isRunning ? 1.9 : 1.2), player.isRunning);
+      this.waterStep(player.isRunning ? 'enter' : 'walk', this.cfg.waterStepVolume * (player.isRunning ? 1.2 : 1));
       this.splashAt = e.time;
       this.stepNoise = 1;
     }

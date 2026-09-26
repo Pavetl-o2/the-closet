@@ -439,6 +439,30 @@ export class AudioEngine {
     o.stop(t + dur + 0.05);
   }
 
+  // Reproduce un buffer ya renderizado (hoy, las pisadas en agua; mañana,
+  // cualquier sample grabado). Con `at` se sitúa en el mundo; sin él va
+  // pegado a ti, como tus propios pasos. Una sola voz, sea cual sea la
+  // complejidad del sonido.
+  playBuffer(buffer, { vol = 1, rate = 1, reverbSend = 0.8, budget = 1, delay = 0, at = null } = {}) {
+    if (!buffer || !this.canPlay(budget)) return;
+    const ctx = this.ctx;
+    const t = this.time + delay;
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    src.playbackRate.value = rate;
+    const g = ctx.createGain();
+    g.gain.value = vol;
+    src.connect(g);
+    const dur = delay + buffer.duration / rate;
+    if (at) {
+      g.connect(this.spatialChain(at[0], at[1], at[2], { reverbSend }).input);
+      this.track(src, dur);
+    } else {
+      this.flat({ node: src, gain: g, dur, reverbSend });
+    }
+    src.start(t);
+  }
+
   // Fuente continua pegada a ti (el zumbido de la linterna). No se sitúa:
   // la llevas en la mano, va contigo vayas donde vayas.
   hum({ freqs, noiseLevel = 0, filterHz = 3000, vol = 0 }) {
